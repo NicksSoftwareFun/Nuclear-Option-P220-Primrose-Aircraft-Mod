@@ -1,0 +1,13 @@
+# Changelog
+
+## 0.2.7-alpha
+First public test build.
+- Flyable P220 Primrose airborne early warning conversion with a GlobalEye-style dorsal radar.
+- Tail defensive laser turret (120 kW, 135 degrees either side, missiles aimed at the aircraft only), powered by a 600 kJ capacitor.
+- Rear weapons bay with Bay Left and Bay Right hardpoints and one pair of doors; one wing pylon per side.
+- Radar jammer and flare dispenser.
+- Forward doors open on the ground and are jettisoned for the crew to bail out (no ejection seats).
+- Windscreen and ten rows of cabin windows into blocked-out flight deck and crew cabin; forward, rear and over-wing door outlines; belly cargo door.
+- Squashes to fit the medium hangar door and grows to full height after leaving the hangar.
+- Landing gear breaks on hard landings and rough ground like the stock aircraft.
+- The laser is the last weapon in the cycling order.

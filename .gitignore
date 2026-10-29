@@ -1,0 +1,10 @@
+bin/
+obj/
+out/
+lib/
+*.nobp
+*.blend
+*.blend1
+__pycache__/
+*.fbx
+*.obj

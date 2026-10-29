@@ -1,0 +1,22 @@
+# Credits
+
+## Game
+
+Nuclear Option and its assets are the property of Shockfront Studios. This project is not affiliated with or endorsed by Shockfront Studios.
+
+The P220 Primrose is built on the stock Medusa setup. Its exterior model is original. At load time Blueprinter points the bundle at the game's own shaders, effects, sounds, weapons and pylons.
+
+The bundle also carries copies of a few stock parts: the Medusa flight deck interior, crew and canopy glass, and the Spearhead's laser turret. They remain the property of Shockfront Studios. This repository does not contain them.
+
+## Third-party software
+
+| Project | Author | Licence | Use |
+|---|---|---|---|
+| [BepInEx](https://github.com/BepInEx/BepInEx) | BepInEx team | LGPL-2.1 | Mod loader (runtime dependency, not redistributed) |
+| [Harmony](https://github.com/pardeike/Harmony) | Andreas Pardeike | MIT | Runtime patching (ships with BepInEx, not redistributed) |
+| [Blueprinter](https://github.com/nikkorap/NOBlueprinter-Releases) | nikkorap | See its repository | Loads the embedded `.nobp` bundle (runtime dependency, not redistributed) |
+| [Blender](https://www.blender.org/) / bpy | Blender Foundation | GPL-2.0-or-later | Modelling and rendering tool (not redistributed) |
+
+## P220 Primrose
+
+Model, plugin and scripts by NicksSoftwareFun, released under the [MIT License](LICENSE).

@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (for example v0.2.7-alpha)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package source
+        # GitHub lists release assets by name, so the source zip is named to sort after P220Primrose.dll
+        run: zip -r "Source-P220Primrose-${TAG}.zip" src unity art
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f "release/notes-${TAG}.md" ]; then
+            cp "release/notes-${TAG}.md" notes.txt
+          else
+            awk 'NR>3 && /^## /{exit} NR>3' CHANGELOG.txt > notes.txt
+          fi
+          PRE=""
+          case "$TAG" in v0*) PRE="--prerelease" ;; esac
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" release/P220Primrose.dll "Source-P220Primrose-${TAG}.zip" --clobber
+          else
+            gh release create "$TAG" release/P220Primrose.dll "Source-P220Primrose-${TAG}.zip" \
+              --target "$GITHUB_SHA" --title "P220 Primrose ${TAG}" --notes-file notes.txt $PRE
+          fi

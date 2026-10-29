@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>P220Primrose</AssemblyName>
+    <RootNamespace>A220Airliner</RootNamespace>
+    <Version>0.2.7</Version>
+    <LangVersion>latest</LangVersion>
+    <Optimize>true</Optimize>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Nuclear Option install folder. Override with: dotnet build -c Release -p:GameDir="D:\Games\Nuclear Option" -->
+    <GameDir Condition="'$(GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Nuclear Option</GameDir>
+    <ManagedDir>$(GameDir)\NuclearOption_Data\Managed</ManagedDir>
+    <BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
+    <!-- Blueprinter bundle built by the Unity Mod Builder, copied next to this file before building. -->
+    <NobpFile Condition="'$(NobpFile)' == ''">A220-300_0.2.7.nobp</NobpFile>
+    <NobpResourceName Condition="'$(NobpResourceName)' == ''">P220Primrose.A220-300_0.2.7.nobp</NobpResourceName>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="$(NobpFile)" Condition="Exists('$(NobpFile)')">
+      <LogicalName>$(NobpResourceName)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="$(ManagedDir)\UnityEngine.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\UnityEngine.PhysicsModule.dll" Private="false" />
+    <Reference Include="$(ManagedDir)\netstandard.dll" Private="false" />
+    <Reference Include="$(BepInExCore)\BepInEx.dll" Private="false" />
+    <Reference Include="$(BepInExCore)\0Harmony.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="WarnMissingBundle" BeforeTargets="Build" Condition="!Exists('$(NobpFile)')">
+    <Warning Text="$(NobpFile) not found next to the project. The DLL will build without the P220 Primrose bundle." />
+  </Target>
+</Project>
