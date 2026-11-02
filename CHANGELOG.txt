@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.28-alpha
+- First livery, "P-LINK Demonstrator", with colour, normal, metallic, ambient occlusion and damage maps. The skin is double-sided like the stock aircraft.
+- Internal structure (frames, stringers, floor beams, spars, ribs) and engine cores that show through damage, in the stock structure and engine materials.
+- New flight deck: side sticks, sliding thrust levers, rudder pedals that slide with yaw, four displays on the P220's own tactical page, warning lights and a taped maintenance page.
+- THORNE Airborne Laser replaces the old turret. It sits in a scooped hood on the tail cone and covers everything below and behind the aircraft, with a rest pose, HUD hints and an aiming box. It never fires through its own aircraft.
+- Capacitor Pack option for the rear bay (adds 75% to the laser's capacitor).
+- Dorsal radar renamed SpectralEye AEW Radar.
+- The hangar squash is replaced by a folding fin. It folds up 40 m after leaving the hangar.
+- Thrust reversers on both engines, working only on the ground with the gear down.
+- Forward door arm, door outlines, gear wells and gear mechanism, cargo bay with a side cargo door, over-wing exits.
+- Own map and selection icon and own damage diagram.
+- Wing pylons: single and double air-to-air, anti-radiation, heavy air-to-ground and anti-ship missiles, Genie, rocket pod, smoke pod and jamming pod. There are no triple racks, Scimitars or Tusko.
+- Flight model retuned (lift, pitch authority, AI speeds).
+- Triangle count cut to about 140k.
+- Breaking: the plugin GUID is now nick.nuclearoption.p220primrose and the aircraft key is P220Primrose. Missions saved with 0.2.7-alpha no longer find the aircraft.
+
 ## 0.2.7-alpha
 First public test build.
 - Flyable P220 Primrose airborne early warning conversion with a GlobalEye-style dorsal radar.

@@ -2,8 +2,8 @@
   <PropertyGroup>
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>P220Primrose</AssemblyName>
-    <RootNamespace>A220Airliner</RootNamespace>
-    <Version>0.2.7</Version>
+    <RootNamespace>P220Primrose</RootNamespace>
+    <Version>0.3.28</Version>
     <LangVersion>latest</LangVersion>
     <Optimize>true</Optimize>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
@@ -12,8 +12,8 @@
     <ManagedDir>$(GameDir)\NuclearOption_Data\Managed</ManagedDir>
     <BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
     <!-- Blueprinter bundle built by the Unity Mod Builder, copied next to this file before building. -->
-    <NobpFile Condition="'$(NobpFile)' == ''">A220-300_0.2.7.nobp</NobpFile>
-    <NobpResourceName Condition="'$(NobpResourceName)' == ''">P220Primrose.A220-300_0.2.7.nobp</NobpResourceName>
+    <NobpFile Condition="'$(NobpFile)' == ''">P220Primrose_0.3.28.nobp</NobpFile>
+    <NobpResourceName Condition="'$(NobpResourceName)' == ''">P220Primrose.P220Primrose_0.3.28.nobp</NobpResourceName>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="$(NobpFile)" Condition="Exists('$(NobpFile)')">
