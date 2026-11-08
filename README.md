@@ -26,4 +26,4 @@ Download `P220Primrose.dll` from the [releases page](../../releases) and put it 
 ![PALA Air Force Grey](docs/images/4_pala_air_force_grey.png)
 ![Bay release](docs/images/5_bay_release.png)
 
-Claude helped with this project.
+Claude helped with this project for some modeling and coding so I could ship it in time for paternity leave.
