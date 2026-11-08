@@ -8,3 +8,4 @@ lib/
 __pycache__/
 *.fbx
 *.obj
+!Livery Bundle/*.fbx

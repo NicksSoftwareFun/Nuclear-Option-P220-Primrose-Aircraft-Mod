@@ -19,7 +19,7 @@ CHAR = np.array([40, 42, 44], np.float32) / 255           # dark charcoal letter
 YEL = np.array([244, 214, 92], np.float32) / 255          # primrose petals
 YEL2 = np.array([226, 150, 40], np.float32) / 255         # primrose eye
 SM_WHITE, SM_OLIVE = 0.80, 0.72                           # gloss paint smoothness
-LIVERY = os.environ.get('P220_LIVERY', 'plink')          # plink (P-LINK Demonstrator) | civil | pala
+LIVERY = os.environ.get('P220_LIVERY', 'plink')          # plink (P-LINK Demonstrator) | civil | pala | blank (Livery Bundle base: plain white, no markings)
 OFFW = np.array([238, 234, 226], np.float32) / 255        # civil: warm off-white
 PINK = np.array([196, 146, 148], np.float32) / 255        # civil: dusty pink
 PINK_D = np.array([150, 92, 98], np.float32) / 255        # civil: deeper rose for lines and stencils
@@ -426,6 +426,8 @@ def paint(maps, outdir):
     for sx in (-1, 1):
         M.stamp_top(t_fuel, wing, sx * 9.6, 18.9, 0.45, ACC, up=False)
     if LIVERY == 'pala': pala_wing_marks(M, wing)
+    if LIVERY == 'blank':   # Livery Bundle base: plain white, no markings, only the light panel-line grime below
+        M.col[:] = WHITE; M.paint_mask[:] = 0
     # ------------------------------------------------------------ panel lines (height field, metres)
     def height(P, ws=1.0, painted=False):
         dd = NOSE_Y - P[:, 1]; xx = P[:, 0]; zz = P[:, 2]

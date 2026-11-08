@@ -1,25 +1,36 @@
 """Export the complete P220 exterior for livery painting (the repo's Livery Bundle).
 Usage: python3 export_livery_bundle.py -- <p220 uv blend> <texture dir> <out_dir>
-Writes <out_dir>/P220 Exterior.fbx: every exterior part at its place (doors, bays and nose gear doors shut, fin upright,
-reversers stowed, flaps and slats in), named by part, with the in-game UVs. Rules:
+Writes <out_dir>/P220 Exterior.fbx: every exterior part at its place (gear down with the nose gear doors open, doors
+and bays shut, fin upright, reversers stowed, flaps and slats in), named by part, with the in-game UVs. Rules:
 - every P220_skin face is kept, so the skin has no holes (only the reversed back face of a face pair is dropped, so
   Blender does not show two faces fighting in the same place);
 - faces of the other materials (windows, glass, metal, fans) are kept only where they can be seen from outside
   (from either side, since the game draws glass from both sides);
-- landing gear legs, wheels and the fan blur discs are left out (none of them take the livery);
+- the fan blur discs are left out;
 - the GlobalEye radar fairing and the laser hood are mounts in game but take the livery, so they are included.
-The livery goes on material P220_skin, which points at 'P220 Base.png' in the same folder.
+The livery goes on material P220_skin, which points at 'P220 Base.png' (plain white, P220_LIVERY=blank) in the same folder.
 Also writes <out_dir>/P220 UV Layout.png (island outlines, 2048 px, transparent) and the texture maps."""
 import bpy, bmesh, sys, os, math
 import numpy as np
-from mathutils import Vector
+from mathutils import Vector, Matrix
 from mathutils.bvhtree import BVHTree
 from PIL import Image, ImageDraw
 a = sys.argv[sys.argv.index('--') + 1:]
 src, tex, outdir = a[0], a[1], a[2]; os.makedirs(outdir, exist_ok=True)
 bpy.ops.wm.open_mainfile(filepath=src)
 SKIN = 'P220_skin'
-LEAVE_OUT = ('gear_', 'gearHinge', 'gearact_', 'gearstay_', 'wheel_', 'fanblur_')
+LEAVE_OUT = ('fanblur_',)
+# landing gear down: open the nose gear doors on their hinge line (85 deg, the way the game does), so the leg clears them
+for s in ('L', 'R'):
+    dr = bpy.data.objects['geardoor_F' + s]; a0 = bpy.data.objects['geardoor_F' + s + '_hingeA'].matrix_world.translation
+    a1 = bpy.data.objects['geardoor_F' + s + '_hingeB'].matrix_world.translation; ax = (a1 - a0).normalized()
+    best = None
+    for sg in (1, -1):
+        R = Matrix.Translation(a0) @ Matrix.Rotation(math.radians(85 * sg), 4, ax) @ Matrix.Translation(-a0)
+        cz = sum(((R @ dr.matrix_world) @ v.co).z for v in dr.data.vertices) / len(dr.data.vertices)
+        if best is None or cz < best[0]: best = (cz, R)
+    dr.matrix_world = best[1] @ dr.matrix_world
+bpy.context.view_layer.update()
 objs = [o for o in bpy.data.collections['MODEL'].objects
         if o.type == 'MESH' and len(o.data.polygons) and not o.hide_render and not o.name.startswith(LEAVE_OUT)]
 vs, ps = [], []
@@ -126,7 +137,7 @@ for n in parts:
         dr.line(pts + [pts[0]], fill=(255, 255, 255, 255), width=1)
 im.save(os.path.join(outdir, 'P220 UV Layout.png'))
 # texture maps, renamed for painters
-Image.open(os.path.join(tex, 'P220_skin_b.png')).convert('RGB').save(os.path.join(outdir, 'P220 Base.png'))
+Image.open(os.path.join(tex, 'P220_skin_blank_b.png')).convert('RGB').save(os.path.join(outdir, 'P220 Base.png'))
 Image.open(os.path.join(tex, 'P220_skin_n.png')).convert('RGB').save(os.path.join(outdir, 'P220 Normals.png'))
 m = Image.open(os.path.join(tex, 'P220_skin_m.png')).convert('RGBA')
 m.save(os.path.join(outdir, 'P220 Metallic Smoothness (game format).png'))

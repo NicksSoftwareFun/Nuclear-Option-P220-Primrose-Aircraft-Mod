@@ -6,15 +6,16 @@ Matches mod version 1.0.0 and later.
 FILES
 
 P220 Exterior.fbx
-  The complete exterior, assembled: every outer part in place and named by part, doors and bays shut, flaps and
-  slats in, fin upright, in metres. All of the skin is included, with the in-game texture layout. The interior,
-  structure and landing gear are left out. The SpectralEye radar fairing and the laser hood are included because
+  The complete exterior, assembled: every outer part in place and named by part, landing gear down, doors and bays
+  shut, flaps and slats in, fin upright, in metres. All of the skin is included, with the in-game texture layout.
+  The interior and structure are left out. The SpectralEye radar fairing and the laser hood are included because
   they take the livery too.
   The livery goes on material P220_skin, which points at "P220 Base.png". Keep the FBX and the PNG files in the
-  same folder. The other materials (windows, glass, metal, fans) are not painted by a livery.
+  same folder. The other materials (windows, glass, metal, tyres, fans) are not painted by a livery.
 
 P220 Base.png
-  Base colour of the P-LINK Demonstrator livery, 2048 x 2048. Paint over this or over one of the shipped liveries.
+  Blank base colour: plain white with faint panel lines, no markings, 2048 x 2048. Paint over this or over one of
+  the shipped liveries.
 
 P220 UV Layout.png
   Texture island outlines on a transparent background, to lay over your work in a 2D editor.
