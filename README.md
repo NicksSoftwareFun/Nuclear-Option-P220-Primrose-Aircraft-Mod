@@ -17,9 +17,8 @@ Download `P220Primrose.dll` from the [releases page](../../releases) and put it 
 ## The aircraft
 
 - SpectralEye AEW Radar, rear weapons bay (Bay Left and Bay Right), wing pylons and a Capacitor Pack option.
-- THORNE Airborne Laser in the tail cone: shoots down missiles coming from below and behind.
-- Radar jammer and flares. Four crew who bail out through the forward doors.
-- The fin folds to fit the medium hangar and unfolds once the aircraft has taxied out.
+- THORNE Airborne Laser in the tail cone.
+- Four crew who bail out through the forward doors.
 - Three liveries: P-LINK Demonstrator, Primeva Link Service and PALA Air Force Grey (PALA only). Workshop livery tag: `P220 Primrose`.
 
 ![P-LINK Demonstrator](docs/images/2_demonstrator.png)
@@ -27,10 +26,4 @@ Download `P220Primrose.dll` from the [releases page](../../releases) and put it 
 ![PALA Air Force Grey](docs/images/4_pala_air_force_grey.png)
 ![Bay release](docs/images/5_bay_release.png)
 
-## Source
-
-`src/` is the plugin, `unity/Editor` builds the prefab in a Blueprinter project, and `art/scripts` builds the model and textures in Blender. Build with `dotnet build -c Release -p:GameDir="<your Nuclear Option folder>"` after copying the `.nobp` next to `src/P220Primrose.csproj`.
-
-## Licence
-
-MIT. See [LICENSE](LICENSE) and [CREDITS.txt](CREDITS.txt).
+Claude helped with this project.
