@@ -26,4 +26,8 @@ Download `P220Primrose.dll` from the [releases page](../../releases) and put it 
 ![PALA Air Force Grey](docs/images/4_pala_air_force_grey.png)
 ![Bay release](docs/images/5_bay_release.png)
 
+## Livery Bundle
+
+`Livery Bundle/` has the complete exterior as an FBX with the in-game texture layout, the surface maps, a UV layout overlay and the three shipped liveries. Import `P220 Exterior.fbx` into Blender and paint on the skin. See `Livery Bundle/README.txt`.
+
 Claude helped with this project for some modeling and coding so I could ship it in time for paternity leave.

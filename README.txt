@@ -27,9 +27,13 @@ Download `P220Primrose.dll` from the [releases page](../../releases) and put it 
 ![PALA Air Force Grey](docs/images/4_pala_air_force_grey.png)
 ![Bay release](docs/images/5_bay_release.png)
 
+## Livery Bundle
+
+`Livery Bundle/` has the complete exterior as an FBX with the in-game texture layout, the surface maps, a UV layout overlay and the three shipped liveries. Import `P220 Exterior.fbx` into Blender and paint on the skin. See `Livery Bundle/README.txt`.
+
 ## Source
 
-`src/` is the plugin, `unity/Editor` builds the prefab in a Blueprinter project, and `art/scripts` builds the model and textures in Blender. Build with `dotnet build -c Release -p:GameDir="<your Nuclear Option folder>"` after copying the `.nobp` next to `src/P220Primrose.csproj`.
+`src/` is the plugin, `unity/Editor` builds the prefab in a Blueprinter project, and `art/scripts` builds the model and textures in Blender (`art/scripts/livery/export_livery_bundle.py` writes the Livery Bundle). Build with `dotnet build -c Release -p:GameDir="<your Nuclear Option folder>"` after copying the `.nobp` next to `src/P220Primrose.csproj`.
 
 ## Licence
 
