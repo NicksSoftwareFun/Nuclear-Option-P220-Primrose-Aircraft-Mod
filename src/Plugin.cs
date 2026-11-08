@@ -13,7 +13,7 @@ namespace P220Primrose
     // and the fin folds up vertical once the aircraft has rolled 25 m from its spawn point. Only aircraft that come out
     // of a hangar are folded; runway and air spawns, the hangar preview and the encyclopedia show it upright. No stock
     // aircraft folds its fin, so this needs the plugin.
-    [BepInPlugin("nick.nuclearoption.p220primrose", "P220 Primrose", "1.0.0")]
+    [BepInPlugin("nick.nuclearoption.p220primrose", "P220 Primrose", "1.0.1")]
     [BepInDependency("com.nikkorap.blueprinter", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {

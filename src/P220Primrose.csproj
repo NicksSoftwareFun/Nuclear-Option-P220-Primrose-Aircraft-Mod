@@ -3,7 +3,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>P220Primrose</AssemblyName>
     <RootNamespace>P220Primrose</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <LangVersion>latest</LangVersion>
     <Optimize>true</Optimize>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
@@ -12,8 +12,8 @@
     <ManagedDir>$(GameDir)\NuclearOption_Data\Managed</ManagedDir>
     <BepInExCore>$(GameDir)\BepInEx\core</BepInExCore>
     <!-- Blueprinter bundle built by the Unity Mod Builder, copied next to this file before building. -->
-    <NobpFile Condition="'$(NobpFile)' == ''">P220Primrose_1.0.0.nobp</NobpFile>
-    <NobpResourceName Condition="'$(NobpResourceName)' == ''">P220Primrose.P220Primrose_1.0.0.nobp</NobpResourceName>
+    <NobpFile Condition="'$(NobpFile)' == ''">P220Primrose_1.0.1.nobp</NobpFile>
+    <NobpResourceName Condition="'$(NobpResourceName)' == ''">P220Primrose.P220Primrose_1.0.1.nobp</NobpResourceName>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="$(NobpFile)" Condition="Exists('$(NobpFile)')">

@@ -18,6 +18,14 @@ def material(name):
         nt.links.new(tx.outputs['Color'], b.inputs['Base Color']); b.inputs['Roughness'].default_value = 0.55
         tn = nt.nodes.new('ShaderNodeTexImage'); tn.image = bpy.data.images.load(TEXDIR + '/P220_cockpit_n.png'); tn.image.colorspace_settings.name = 'Non-Color'
         nm = nt.nodes.new('ShaderNodeNormalMap'); nt.links.new(tn.outputs['Color'], nm.inputs['Color']); nt.links.new(nm.outputs['Normal'], b.inputs['Normal'])
+    elif name == 'P220_cabin':     # 0.4.7: textured grey plastic, 0.5 m tiles (UVs at 2.5 m per unit, x5 as in the builder)
+        tc = nt.nodes.new('ShaderNodeTexCoord'); mp = nt.nodes.new('ShaderNodeMapping'); mp.inputs['Scale'].default_value = (5, 5, 5)
+        nt.links.new(tc.outputs['UV'], mp.inputs['Vector'])
+        tx = nt.nodes.new('ShaderNodeTexImage'); tx.image = bpy.data.images.load(TEXDIR + '/P220_plastic_b.png'); nt.links.new(mp.outputs['Vector'], tx.inputs['Vector'])
+        nt.links.new(tx.outputs['Color'], b.inputs['Base Color']); b.inputs['Roughness'].default_value = 0.72
+        tn = nt.nodes.new('ShaderNodeTexImage'); tn.image = bpy.data.images.load(TEXDIR + '/P220_plastic_n.png'); tn.image.colorspace_settings.name = 'Non-Color'
+        nt.links.new(mp.outputs['Vector'], tn.inputs['Vector'])
+        nm = nt.nodes.new('ShaderNodeNormalMap'); nt.links.new(tn.outputs['Color'], nm.inputs['Color']); nt.links.new(nm.outputs['Normal'], b.inputs['Normal'])
     elif name == 'tacScreenDisplay':
         tx = nt.nodes.new('ShaderNodeTexImage'); tx.image = bpy.data.images.load(TEXDIR + '/screen_tacScreenDisplay.png')
         b.inputs['Base Color'].default_value = (0, 0, 0, 1)
@@ -122,16 +130,43 @@ SHOTS = {   # name: (cam pos, target, fov), Unity coordinates
     'feet':    ((-0.38, 0.80, 16.30), (-0.40, -0.15, 17.15), 70),
     'extcrown': ((-3.2, 2.6, 20.6), (0.0, 1.0, 17.2), 35),
     'extfront': ((-1.4, 1.2, 21.0), (0.0, 0.75, 17.1), 32),
-    'exthead': ((0.0, 0.55, 27.0), (0.0, 0.45, 17.5), 22),     # head-on, like a front screenshot
+    'exthead': ((0.0, 0.55, 27.0), (0.0, 0.45, 17.5), 22),     # head-on, like the front screenshot
     'extside': ((-5.5, 0.9, 16.2), (0.0, 0.70, 16.9), 35),
     'eyeside': ((-0.38, 0.84, 16.29), (-1.2, 0.60, 16.90), 80),
     'eyeup':   ((-0.38, 0.84, 16.29), (-0.10, 1.10, 17.30), 80),
     'roof':    ((-0.37, 0.85, 16.30), (0.20, 1.25, 17.10), 95),
     'game':    ((-0.37, 0.85, 16.30), (-0.37, 0.85, 17.30), 75),   # in-game default head, level
+    'notepg':  ((-0.45, 0.80, 16.55), (-0.68, 0.52, 17.35), 45),
     'lookright': ((-0.37, 0.85, 16.30), (1.0, 0.45, 16.25), 90),
     'extwin':  ((-3.2, 1.0, 17.2), (0.0, 0.55, 16.0), 30),
     'quad':    ((-0.30, 0.62, 16.55), (0.0, 0.24, 16.88), 45),
     'quadtop': ((0.0, 0.80, 16.86), (0.0, 0.20, 16.88), 35),
+    'upfwd':   ((-0.37, 0.85, 16.30), (-0.20, 1.35, 17.20), 85),   # ceiling over the windscreen from the game head
+    'upfwdR':  ((-0.37, 0.85, 16.30), (0.45, 1.30, 17.10), 85),
+    'lookleft': ((-0.37, 0.85, 16.30), (-1.6, 0.45, 16.45), 90),
+    'pedd':    ((-0.37, 0.85, 16.30), (0.0, 0.20, 16.80), 75),     # down at the pedestal from the game head
+    'stickc':  ((-0.70, 0.45, 16.70), (-0.92, 0.30, 16.98), 40),   # close on the captain's side stick
+    'stickc2': ((-1.05, 0.48, 16.78), (-0.92, 0.30, 16.98), 40),
+    'stickv':  ((-0.62, 0.52, 16.62), (-0.92, 0.33, 16.98), 34),   # captain's side stick from the seat, inboard-aft
+    'stickside': ((-0.70, 0.40, 17.05), (-0.92, 0.32, 16.95), 40),   # from inboard-forward, showing the trigger and the button
+    'gear':    ((0.45, 0.70, 16.95), (0.74, 0.48, 17.42), 40),
+    'seatback': ((0.0, 1.30, 15.30), (0.0, 0.20, 16.40), 70),     # crew seats from behind and above
+    'seattop': ((0.0, 1.55, 16.40), (0.0, 0.0, 16.42), 95),
+    'seatside': ((-0.10, 0.75, 15.40), (-0.40, 0.30, 16.45), 70),
+    'armL':    ((-1.05, 0.80, 15.80), (-0.55, 0.32, 16.38), 60),     # captain's seat outboard side, armrest support
+    'armR':    ((0.20, 0.95, 15.70), (0.62, 0.30, 16.35), 60),      # first officer's seat from behind the pedestal
+    'carpet':  ((-0.37, 0.85, 16.30), (0.30, -0.20, 17.00), 80),    # floor between the seats from the game head
+    'bulk':    ((0.25, 1.00, 16.45), (-0.35, 1.45, 14.95), 75),    # bulkhead top edge and the breaker panel against the roof
+    'photo':   ((0.0, 1.10, 15.45), (0.0, 0.30, 17.30), 100),     # from behind and between the seats, like the A220 reference photo
+    'conL':    ((-0.30, 0.80, 16.20), (-0.95, 0.15, 17.05), 70),   # captain's side console and footwell
+    'conTop':  ((-0.62, 0.70, 16.62), (-1.12, 0.20, 16.92), 55),   # 0.4.7: captain's console top, stick panels and O2 box
+    'conR':    ((0.30, 0.80, 16.20), (0.95, 0.15, 17.05), 70),
+    'joinR':   ((0.20, 0.60, 16.55), (0.80, 0.25, 17.35), 60),
+    'joinL':   ((-0.25, 0.65, 16.65), (-0.82, 0.20, 17.40), 45),
+    'gearK':   ((0.45, 0.62, 16.95), (0.72, 0.44, 17.32), 30),
+    'sideL':   ((-0.38, 0.82, 16.31), (-1.6, 0.72, 16.55), 75),
+    'aftL':    ((-0.6, 0.85, 16.20), (-1.6, 0.55, 15.65), 60),
+    'footwell': ((-0.20, 0.45, 16.55), (-0.45, -0.05, 17.55), 70),
 }
 if __name__ == '__main__':
     mode = sys.argv[1]
@@ -148,7 +183,8 @@ if __name__ == '__main__':
         print('exported', list(obs)); sys.exit(0)
     shot, path = sys.argv[2], sys.argv[3]
     reset(); setup_render(1400, 900)
-    ctx = context(); obs = build(skin_clamp(M.build_all())); seats()
+    ctx = context(); obs = build(skin_clamp(M.build_all()))
+    if os.environ.get('EJECT'): seats()   # the stock ejection seat proxies (hidden in the game by the builder)
     p, t, fov = SHOTS[shot]
     if os.environ.get('CULL'):   # back faces transparent like the game; the airframe skin is double-sided in the FBX
         import importlib.util; sys.path.insert(0, '/tmp/dp'); from cull import game_culling
@@ -170,7 +206,7 @@ if __name__ == '__main__':
     else:
         for o in ctx:
             if 'glass' in o.name: o.hide_render = True
-        if shot in ('ped', 'pedals', 'stick', 'centre', 'ovh', 'back', 'feet', 'lookright'):
+        if shot in ('ped', 'pedals', 'stick', 'centre', 'ovh', 'feet', 'lookright'):
             for o in bpy.data.objects:
                 if o.name.startswith('seats'): o.hide_render = True
     if shot.startswith('ext') and os.environ.get('NOGLASS'):
@@ -186,7 +222,7 @@ if __name__ == '__main__':
         obs['stick_R'].hide_render = True
         for o in bpy.data.objects:
             if o.name.startswith('seats'): o.hide_render = False
-    if shot == 'back':
+    if shot == 'back' or shot.startswith('seat') or os.environ.get('NOHULL'):
         for o in ctx: o.hide_render = True
     bpy.context.scene.view_settings.exposure = float(os.environ.get('EXPO', '0.6'))
     if os.environ.get('FILL'):

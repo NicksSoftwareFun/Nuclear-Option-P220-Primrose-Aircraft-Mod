@@ -19,15 +19,16 @@ Download `P220Primrose.dll` from the [releases page](../../releases) and put it 
 - SpectralEye AEW Radar, rear weapons bay (Bay Left and Bay Right), wing pylons and a Capacitor Pack option.
 - THORNE Airborne Laser in the tail cone.
 - Four crew who bail out through the forward doors.
-- Three liveries: P-LINK Demonstrator, Primeva Link Service and PALA Air Force Grey (PALA only). Workshop livery tag: `P220 Primrose`.
+- Four liveries: P-LINK Demonstrator, Primeva Link Service, PALA Air Force Grey and Primevan Royal Family (both PALA only). Workshop livery tag: `P220 Primrose`.
 
 ![P-LINK Demonstrator](docs/images/2_demonstrator.png)
 ![Primeva Link Service](docs/images/3_primeva_link_service.png)
 ![PALA Air Force Grey](docs/images/4_pala_air_force_grey.png)
+![Primevan Royal Family](docs/images/6_primevan_royal_family.png)
 ![Bay release](docs/images/5_bay_release.png)
 
 ## Livery Bundle
 
-`Livery Bundle/` has the complete exterior as an FBX with the in-game texture layout, the surface maps, a UV layout overlay and the three shipped liveries. Import `P220 Exterior.fbx` into Blender and paint on the skin. See `Livery Bundle/README.txt`.
+`Livery Bundle/` has the complete exterior as an FBX with the in-game texture layout, the surface maps, a UV layout overlay and the four shipped liveries. Import `P220 Exterior.fbx` into Blender and paint on the skin. See `Livery Bundle/README.txt`.
 
 Claude helped with this project for some modeling and coding so I could ship it in time for paternity leave.

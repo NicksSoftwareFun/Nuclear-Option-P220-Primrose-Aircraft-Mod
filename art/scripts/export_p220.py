@@ -33,6 +33,45 @@ bpy.ops.object.select_all(action='DESELECT')
 for o in exp.objects: o.select_set(True)
 bpy.context.view_layer.objects.active = exp.objects[0]
 bpy.ops.object.shade_smooth_by_angle(angle=math.radians(35))
+# 0.4.18: wheel hubs take the livery: their metal faces become P220_skin, as the FIRST material (the game sets the livery
+# on a renderer's first material), with UVs inside the hub patch of the atlas (p220_paint.HUB_RC); each livery paints
+# its hub colour there (gold on the royal livery). Tyres keep their own material.
+HUB_UV = ((1021 + 0.5) / 2048, 1 - (616 + 0.5) / 2048); HUB_S = (16 / 2048) / 0.6     # 0.6 m of hub = 16 px
+for o in exp.objects:
+    if not o.name.startswith('wheel_') or o.name.endswith('_colmesh'): continue
+    me = o.data; mats = list(me.materials)
+    if not any(m and m.name == 'P220_metal' for m in mats): continue
+    new = [bpy.data.materials['P220_skin']] + [m for m in mats if not (m and m.name == 'P220_metal')]
+    remap = {i: (0 if (m and m.name == 'P220_metal') else new.index(m)) for i, m in enumerate(mats)}
+    idx = [remap[p.material_index] for p in me.polygons]
+    me.materials.clear()
+    for m in new: me.materials.append(m)
+    for p, k in zip(me.polygons, idx): p.material_index = k
+    if not me.uv_layers: me.uv_layers.new(name='UVMap')
+    uv = me.uv_layers.active.data
+    for p in me.polygons:
+        if p.material_index != 0: continue
+        for li in p.loop_indices:
+            c = me.vertices[me.loops[li].vertex_index].co
+            uv[li].uv = (HUB_UV[0] + c.y * HUB_S, HUB_UV[1] + c.z * HUB_S)
+    print('hub faces', o.name, sum(1 for p in me.polygons if p.material_index == 0))
+    for e in layout:
+        if e['name'] == o.name and e['coll'] == 'MODEL': e['mats'] = [m.name for m in new]   # the builder sets materials from this list
+# 0.4.19: any renderer that carries livery skin must have P220_skin FIRST, or the game never puts the livery on it
+# (main gear leg doors on gear_L/R kept the default texture on every livery)
+for o in exp.objects:
+    if o.type != 'MESH' or o.name.endswith('_colmesh'): continue
+    me = o.data; mats = list(me.materials); names = [m.name if m else '' for m in mats]
+    if 'P220_skin' not in names or names.index('P220_skin') == 0: continue
+    k = names.index('P220_skin'); new = [mats[k]] + [m for i, m in enumerate(mats) if i != k]
+    idx = [new.index(mats[p.material_index]) for p in me.polygons]
+    me.materials.clear()
+    for m in new: me.materials.append(m)
+    for p, j in zip(me.polygons, idx): p.material_index = j
+    print('skin first', o.name)
+    for e in layout:
+        if e['name'] == o.name and e['coll'] == 'MODEL': e['mats'] = [m.name for m in new]
+json.dump(layout, open(os.path.join(outdir, 'P220_layout.json'), 'w'), indent=1)
 for o in exp.objects:
     bm = bmesh.new(); bm.from_mesh(o.data)
     # skin is double-sided like the stock airframes, so a broken-off section or the cockpit view shows a solid inside

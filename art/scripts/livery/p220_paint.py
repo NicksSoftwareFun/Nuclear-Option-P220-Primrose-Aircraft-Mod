@@ -19,7 +19,7 @@ CHAR = np.array([40, 42, 44], np.float32) / 255           # dark charcoal letter
 YEL = np.array([244, 214, 92], np.float32) / 255          # primrose petals
 YEL2 = np.array([226, 150, 40], np.float32) / 255         # primrose eye
 SM_WHITE, SM_OLIVE = 0.80, 0.72                           # gloss paint smoothness
-LIVERY = os.environ.get('P220_LIVERY', 'plink')          # plink (P-LINK Demonstrator) | civil | pala | blank (Livery Bundle base: plain white, no markings)
+LIVERY = os.environ.get('P220_LIVERY', 'plink')          # plink (P-LINK Demonstrator) | civil | pala | royal | blank (Livery Bundle base: plain white, no markings)
 OFFW = np.array([238, 234, 226], np.float32) / 255        # civil: warm off-white
 PINK = np.array([196, 146, 148], np.float32) / 255        # civil: dusty pink
 PINK_D = np.array([150, 92, 98], np.float32) / 255        # civil: deeper rose for lines and stencils
@@ -28,6 +28,9 @@ AFLINE = np.array([62, 66, 70], np.float32) / 255         # pala: panel line / s
 STBLK = np.array([28, 29, 30], np.float32) / 255          # pala: black stencils
 PRED = np.array([146, 4, 0], np.float32) / 255            # pala red (roundel ring)
 RESC = np.array([232, 180, 30], np.float32) / 255         # rescue yellow
+RBLK = np.array([14, 14, 16], np.float32) / 255           # royal: gloss black
+RRED = np.array([158, 16, 28], np.float32) / 255          # royal: crimson swoosh
+GOLD = np.array([206, 164, 74], np.float32) / 255         # royal: gold trim
 FONT_ST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logos', 'AllertaStencil-Regular.ttf')
 LOGO_PALA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logos', 'pala_roundel_color_2048.png')
 FONT_B = '/usr/share/fonts/opentype/inter/Inter-ExtraBold.otf'
@@ -254,6 +257,46 @@ def pala_roundel():
     return _RND['r']
 
 
+def royal_roundel():
+    """The PALA roundel in white and gold for the royal livery: red -> gold, black outlines -> white, the light field
+    left open (the aircraft's black shows through)."""
+    if 'w' not in _RND:
+        r = pala_roundel(); c = r[..., :3]
+        red = np.clip((c[..., 0] - c[..., 1]) * 2.0, 0, 1)
+        light = np.clip((c[..., 1] - 0.35) / 0.5, 0, 1)
+        dark = np.clip(1 - red - light, 0, 1)
+        rgb = red[..., None] * GOLD + dark[..., None] * WHITE + light[..., None] * RBLK
+        _RND['w'] = np.concatenate([rgb, r[..., 3:]], -1).astype(np.float32)
+    return _RND['w']
+
+
+def royal_marks(M, side, fin, on_hull):
+    """Primevan Royal Family, one side: fin emblem, PRIMEVAN CROWN TRANSPORT above the windows, gold window borders,
+    nose roundel under the flight deck windows."""
+    d, z = M.d, M.z; fp = M.fp
+    aa = lambda dist: np.clip(0.5 - dist / fp, 0, 1)
+    rnd = royal_roundel()
+    M.stamp_side_rgba(rnd, fin, side, 35.25, 4.75, 1.75)
+    t = text_mask('PRIMEVAN CROWN TRANSPORT'); w = 7.6; h = w * t.shape[0] / t.shape[1]
+    # the lettering starts where the first window starts: its forward glyph edge on the outer edge of the
+    # first window's gold border (window centre 6.20, border outer edge 0.204 forward of it)
+    # (port reads nose to tail, so its first glyph is forward; starboard reads tail to nose, so its last glyph is forward)
+    cols = np.flatnonzero(t.max(0) > 0.5); lead = cols[0] / t.shape[1]; trail = 1 - (cols[-1] + 1) / t.shape[1]
+    fwd = lead if side < 0 else trail
+    M.stamp_side(t, on_hull, side, (6.20 - 0.204) + w / 2 - fwd * w, 0.95 + h / 2, w, rgb=WHITE)
+    # thin gold border round every cabin window (openings: rounded rect 0.28 x 0.40 m at z 0.55) and the door windows
+    sel = M.part(*FUSE_PARTS) & M.facing(side, 0.2)
+    def rrect(dc, zc, hd, hz, rr):
+        qx = np.abs(d - dc) - (hd - rr); qz = np.abs(z - zc) - (hz - rr)
+        return np.hypot(np.maximum(qx, 0), np.maximum(qz, 0)) + np.minimum(np.maximum(qx, qz), 0) - rr
+    for k in range(10):
+        wd = 5.92 + (k + 0.5) * 0.56
+        M.put(sel, aa(np.abs(rrect(wd, 0.55, 0.155, 0.215, 0.12) - 0.035) - 0.014), GOLD)
+    for dc in (5.10, 15.60, 16.70, 30.25):
+        M.put(sel, aa(np.abs(rrect(dc, 0.55, 0.115, 0.135, 0.10) - 0.03) - 0.012), GOLD)
+    M.stamp_side_rgba(rnd, M.part('nose', 'cockpit_F') & (M.N[:, 0] * side > 0.3), side, 2.75, -0.02, 0.60)
+
+
 def pala_marks(M, side, fin, on_hull):
     """PALA air force markings, one side: fin roundel, red fin-tip band, serial, fuselage wordmark, nose number, rescue."""
     d, z = M.d, M.z
@@ -264,7 +307,9 @@ def pala_marks(M, side, fin, on_hull):
     M.put(tip, aa(np.abs(z - 6.78) - 0.17), PRED)
     M.put(tip, aa(np.abs(np.abs(z - 6.78) - 0.19) - 0.018), STBLK)
     M.stamp_side(text_mask('AF 24-0220', FONT_ST), fin, side, 34.05, 3.55, 1.9, rgb=STBLK)
-    M.stamp_side(text_mask('P  A  L  A', FONT_ST), on_hull, side, 9.6, 1.32, 3.4, rgb=STBLK)
+    # 0.4.15: "PALA" in the P-LINK lettering (Inter ExtraBold), glyph tops level with the top of the forward door frame
+    # (z 1.33), 0.46 m tall so it clears the window band, between the door and the d 9.5 production joint (no painted line through it)
+    M.stamp_side(text_mask('PALA'), on_hull, side, 7.6, 1.33 - 0.23, 0.46 * (292 / 262) * 3.394, rgb=STBLK)
     M.stamp_side(text_mask('0220', FONT_ST), on_hull, side, 2.6, -0.55, 0.62, rgb=STBLK)
     # rescue: door-ejector access panel just aft of the forward door, bottom level with the door sill, under the windows
     sel = on_hull & M.facing(side, 0.2)
@@ -285,6 +330,21 @@ def pala_wing_marks(M, wing):
     dc = float(lerp_np(WING, s, 1) + 0.28 * lerp_np(WING, s, 2))
     M.stamp_top_rgba(rnd, wing, s, dc, 1.35, up=True)
     M.stamp_top_rgba(rnd, wing, -s, dc, 1.35, up=False)
+
+
+# 0.4.18: wheel hubs take the livery. Their faces use P220_skin (made first material by export_p220.py) with
+# UVs inside one flat patch in an empty corner of the atlas (76 px from the nearest island); every livery paints its hub
+# colour there, the shared maps make it bare metal, flat and undamaged. Rows count from the top of the image.
+HUB_RC, HUB_HALF = (616, 1021), 24
+HUB_UV = ((HUB_RC[1] + 0.5) / 2048, 1 - (HUB_RC[0] + 0.5) / 2048)
+HUB_COL = {'royal': GOLD, 'blank': np.array([150, 152, 154], np.float32) / 255}
+HUB_GREY = np.array([128, 130, 133], np.float32) / 255
+
+def hub_patch(path, value):
+    im = Image.open(path); a = np.array(im); S = a.shape[0] // 2048
+    r, c = HUB_RC; h = HUB_HALF
+    a[(r - h) * S:(r + h) * S, (c - h) * S:(c + h) * S] = value
+    Image.fromarray(a, im.mode).save(path, compress_level=6); print('hub patch', os.path.basename(path), value)
 
 
 def paint(maps, outdir):
@@ -332,13 +392,24 @@ def paint(maps, outdir):
     elif LIVERY == 'pala':
         # PALA air force tanker/transport: one matte grey overall, black and dark grey stencils
         M.col[:] = AFGREY; ACC = STBLK
+    elif LIVERY == 'royal':
+        # Primevan Royal Family: gloss black overall, a crimson swoosh along each side rising from under the flight deck
+        # to the tail cone, a gold stripe along its lower edge, gold trim
+        M.col[:] = RBLK; ACC = GOLD
+        tt = np.clip((d - 6.0) / 28.0, 0, 1); sm_ = tt * tt * (3 - 2 * tt)
+        zc = -0.85 + 2.15 * sm_
+        hw = (0.42 * np.clip((d - 3.2) / 5.0, 0, 1) ** 0.6 + 0.12 * sm_) * np.clip((38.0 - d) / 2.5, 0, 1) ** 0.5
+        sw = on_hull & (z > zline) & (d > 3.2) & (d < 38.0)
+        lo = zc - hw
+        M.put(sw, aa(np.abs(z - zc) - hw), RRED)
+        M.put(sw & (hw > 0.06), aa(np.abs(z - (lo - 0.075)) - 0.032) * np.clip((hw - 0.06) / 0.1, 0, 1), GOLD)
     # ------------------------------------------------------------ nacelles: dark red lip ring
     for sx in (-1, 1):
         cx, cz = sx * 5.35, -2.25
         r = np.hypot(x - cx, z - cz)
         ring = eng & (np.abs(x - cx) < 1.3) & (r > 0.97)
         if LIVERY != 'pala':
-            M.put(ring, aa(d - 13.08), ACC if LIVERY == 'plink' else OFFW)
+            M.put(ring, aa(d - 13.08), ACC if LIVERY in ('plink', 'royal') else OFFW)
             M.put(ring, band(d - 13.14, 0.02), ACC)   # thin second line
     # ------------------------------------------------------------ lettering
     t_prim = text_mask('PRIMROSE'); t_link = text_mask('P-LINK', FONT_S); t_link_m = t_link[:, ::-1].copy(); t_pds = text_mask('PDS1')
@@ -363,6 +434,8 @@ def paint(maps, outdir):
                 M.stamp_top(t_link, M.part(*FUSE_PARTS, 'belly_'), 0.0, dcb, 5.4, PINK_D, up=False, ang=-90.0)
         elif LIVERY == 'pala':
             pala_marks(M, side, fin, on_hull)
+        elif LIVERY == 'royal':
+            royal_marks(M, side, fin, on_hull)
         # (0.3.27b, no fin emblem for now)
     # ------------------------------------------------------------ door and hatch outlines (dark red) and their stencils
     t_exit = text_mask('EXIT', FONT_S); t_push = text_mask('PUSH TO OPEN', FONT_S); t_cargo = text_mask('CARGO DOOR', FONT_S)
@@ -482,12 +555,16 @@ def paint(maps, outdir):
     def save(arr, name, mode):
         Image.fromarray(arr[M.inv[M.idx]].reshape((M.S, M.S) + arr.shape[1:]), mode).save(os.path.join(outdir, name), compress_level=6)
         print('wrote', name)
+    hubc = tuple(int(v) for v in q8(HUB_COL.get(LIVERY, HUB_GREY)))
     if LIVERY != 'plink':   # the other liveries only change the colour map (n/m/ao/damage maps are shared, as stock)
-        save(q8(np.clip(M.col, 0, 1)), 'P220_skin_%s_b.png' % LIVERY, 'RGB'); print('done', LIVERY, '%.1fs' % (time.time() - t0)); return
-    save(q8(np.clip(M.col, 0, 1)), 'P220_skin_b.png', 'RGB')
-    save(q8(nrm * 0.5 + 0.5), 'P220_skin_n.png', 'RGB')
+        save(q8(np.clip(M.col, 0, 1)), 'P220_skin_%s_b.png' % LIVERY, 'RGB')
+        hub_patch(os.path.join(outdir, 'P220_skin_%s_b.png' % LIVERY), hubc)
+        print('done', LIVERY, '%.1fs' % (time.time() - t0)); return
+    save(q8(np.clip(M.col, 0, 1)), 'P220_skin_b.png', 'RGB'); hub_patch(os.path.join(outdir, 'P220_skin_b.png'), hubc)
+    save(q8(nrm * 0.5 + 0.5), 'P220_skin_n.png', 'RGB'); hub_patch(os.path.join(outdir, 'P220_skin_n.png'), (128, 128, 255))
     sm = np.clip(M.sm, 0, 1)
     save(q8(np.stack([M.mt, M.mt, M.mt, sm], 1)), 'P220_skin_m.png', 'RGBA')
+    hub_patch(os.path.join(outdir, 'P220_skin_m.png'), (255, 255, 255, 190))   # bare metal, polished
     hh = np.clip(H[0] * 0.25 + 0.5, 0, 1)
     Image.fromarray((hh[M.inv[M.idx]].reshape(M.S, M.S) * 65535).astype(np.uint16)).save(os.path.join(outdir, 'P220_skin_height.png'))
     # ------------------------------------------------------------ damage colour and normal (PB-22 style)

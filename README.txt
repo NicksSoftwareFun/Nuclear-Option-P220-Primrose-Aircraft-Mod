@@ -20,16 +20,17 @@ Download `P220Primrose.dll` from the [releases page](../../releases) and put it 
 - THORNE Airborne Laser in the tail cone: shoots down missiles coming from below and behind.
 - Radar jammer and flares. Four crew who bail out through the forward doors.
 - The fin folds to fit the medium hangar and unfolds once the aircraft has taxied out.
-- Three liveries: P-LINK Demonstrator, Primeva Link Service and PALA Air Force Grey (PALA only). Workshop livery tag: `P220 Primrose`.
+- Four liveries: P-LINK Demonstrator, Primeva Link Service, PALA Air Force Grey and Primevan Royal Family (both PALA only). Workshop livery tag: `P220 Primrose`.
 
 ![P-LINK Demonstrator](docs/images/2_demonstrator.png)
 ![Primeva Link Service](docs/images/3_primeva_link_service.png)
 ![PALA Air Force Grey](docs/images/4_pala_air_force_grey.png)
+![Primevan Royal Family](docs/images/6_primevan_royal_family.png)
 ![Bay release](docs/images/5_bay_release.png)
 
 ## Livery Bundle
 
-`Livery Bundle/` has the complete exterior as an FBX with the in-game texture layout, the surface maps, a UV layout overlay and the three shipped liveries. Import `P220 Exterior.fbx` into Blender and paint on the skin. See `Livery Bundle/README.txt`.
+`Livery Bundle/` has the complete exterior as an FBX with the in-game texture layout, the surface maps, a UV layout overlay and the four shipped liveries. Import `P220 Exterior.fbx` into Blender and paint on the skin. See `Livery Bundle/README.txt`.
 
 ## Source
 

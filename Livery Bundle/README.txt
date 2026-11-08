@@ -1,7 +1,7 @@
 P220 Primrose Livery Bundle
 
 Everything you need to paint a livery for the P220 Primrose in Blender (or any 3D paint program).
-Matches mod version 1.0.0 and later.
+Matches mod version 1.0.0 and later. The gold wheel hubs need 1.0.1.
 
 FILES
 
@@ -24,7 +24,8 @@ P220 Normals.png, P220 Metallic.png, P220 Roughness.png, P220 Metallic Smoothnes
   The shared surface maps, for previews. A livery does not change these.
 
 Shipped Liveries
-  The three liveries that ship with the mod: P-LINK Demonstrator, Primeva Link Service and PALA Air Force Grey.
+  The four liveries that ship with the mod: P-LINK Demonstrator, Primeva Link Service, PALA Air Force Grey and
+  Primevan Royal Family.
 
 PAINTING IN BLENDER
 
@@ -40,3 +41,5 @@ GOOD TO KNOW
 - The skin is double-sided in the game, so the inside of a broken panel shows your paint mirrored and in shadow.
   Nothing extra to paint.
 - Keep important artwork a few pixels away from the island edges.
+- From 1.0.1 the wheel hubs take their colour from a small square in the texture, 48 x 48 pixels centred on
+  column 1021, row 616 (counted from the top left). Paint that square to colour the hubs; leave it grey for plain hubs.

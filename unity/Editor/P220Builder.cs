@@ -273,7 +273,7 @@ public static class P220Builder
         so.ApplyModifiedPropertiesWithoutUndo(); EditorUtility.SetDirty(liv);
         log.AppendLine("skin material + livery " + AssetDatabase.AssetPathToGUID(LIVERY));
         // 0.4.13 (the author 2026-11-08): two more liveries, each only its own colour texture like the stock liveries
-        foreach (var k in new[] { "civil", "pala" })
+        foreach (var k in new[] { "civil", "pala", "royal" })
         {
             var tb = SkinTex("P220_skin_" + k + "_b", true, false, false);
             string lp = ART + "P220_livery_" + k + ".asset";
@@ -450,6 +450,7 @@ public static class P220Builder
             Purge();
             Weapons();
             AeroAndDamage();
+            FlightControls();
             Rename();
             CockpitP220();
             SkinRegister();
@@ -1671,7 +1672,7 @@ public static class P220Builder
             Set(AP("aileron_" + s), "centerOfLift", P("wing3_" + s) - Need("aileron_" + s).position);
             var tj = C(Need("engine_" + s), "Turbojet");
             Set(tj, "maxThrust", 125000f); Set(tj, "maxSpeed", 300f);
-            Set(tj, "fuelConsumptionMin", 0.2f); Set(tj, "fuelConsumptionMax", 1.4f);
+            Set(tj, "fuelConsumptionMin", 0.043f); Set(tj, "fuelConsumptionMax", 0.30f);   // 0.4.15: kg/s per engine (game draws it once a second, lerped by thrust ratio); was 0.2/1.4, which burned ~45 lb/nmi at cruise against a real A220 ~9.65 lb/nmi (~2,100 kg/h for both engines)
             Set(tj, "failureMessage", s == "L" ? "LEFT ENGINE FIRE" : "RIGHT ENGINE FIRE");
             Set(C(Need("nozzle_R" + s), "JetNozzle"), "IRMax", 4f);
             var el = C(Need("elevator_" + s), "ControlSurface"); Set(el, "pitchRange", -17f); Set(el, "servoSpeed", 40f);   // pitch range was -25: pulled turns too hard (the author 2026-11-01)
@@ -1960,6 +1961,20 @@ public static class P220Builder
         finally { Object.DestroyImmediate(go); }
     }
 
+    // 0.4.16: the Medusa's VTOL helpers come off, so the P220 handles like the stock conventional jets (Darkreach, Revoker,
+    // trainer all have them off): no auto hover (it was the only thing on the P220 that read the custom axis), no hover
+    // autopilot, and no Medusa reverse-thrust landing logic (the AI pushed the throttle up on the rollout, which shut the
+    // P220's reversers, which open at idle). The fly-by-wire stays, as on every stock jet.
+    static void FlightControls()
+    {
+        var cf = root.GetComponentsInChildren<Component>(true).FirstOrDefault(c => c != null && c.GetType().Name == "ControlsFilter");
+        Set(cf, "autoHover.Enabled", false); Set(cf, "autoHover.Active", false); Set(cf, "aimAssist.Enabled", false);
+        Set(cf, "ReverseThrust", false);
+        var ap = root.GetComponentsInChildren<Component>(true).FirstOrDefault(c => c != null && c.GetType().Name == "AutopilotPlane");
+        Set(ap, "hoverController.Enabled", false);
+        log.AppendLine("flight controls: auto hover, hover autopilot and Medusa reverse-thrust landing off");
+    }
+
     // 0.4.14 (bay doors stayed demonstrator green, slats/flaps/spoilers stayed white on other liveries): the game
     // writes the livery texture only into renderers listed in a part's damageMaterial.renderers (a part with an empty list
     // gets just its own renderer), so every P220_skin renderer that is not a part itself is added to its owning part.
@@ -2107,7 +2122,8 @@ public static class P220Builder
         // 0.4.13 (the author 2026-11-08): + Primeva Link line service (any faction) and the PALA air force grey, locked to PALA
         // like the stock faction liveries (the faction placeholder is swapped for the game's Faction by the mod builder)
         string[,] LIVS = { { "P-LINK Demonstrator", "P220_livery_plink", "" }, { "Primeva Link Service", "P220_livery_civil", "" },
-                           { "PALA Air Force Grey", "P220_livery_pala", "Primeva" } };
+                           { "PALA Air Force Grey", "P220_livery_pala", "Primeva" },
+                           { "Primevan Royal Family", "P220_livery_royal", "Primeva" } };   // bonus livery: gloss black, crimson swoosh, gold trim
         var liv = so.FindProperty("liveries"); liv.arraySize = LIVS.GetLength(0);
         for (int i = 0; i < LIVS.GetLength(0); i++)
         {

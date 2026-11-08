@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1
+- New bonus livery: Primevan Royal Family. Gloss black with a red swoosh edged in gold, gold engine rings, gold window borders, PRIMEVAN CROWN TRANSPORT above the windows and a white and gold PALA emblem on the tail and nose (PALA only).
+- Wheel hubs take their colour from the livery (gold on Primevan Royal Family, grey on the others).
+- The doors on the main gear legs now take the livery.
+- Lower fuel burn, close to a real airliner at cruise.
+- The auto hover and other helicopter-style flight assists are off, like the stock jets. Thrust reversers now stay open on the landing roll.
+- PALA livery lettering in the same typeface as the other liveries.
+- The taped manual page in the cockpit no longer clips into the panel.
+- Livery Bundle: all four shipped liveries, and where to paint the hub colour.
+
 ## 1.0.0
 - Two new liveries: Primeva Link Service (off-white and dusty pink airliner) and PALA Air Force Grey (air force grey with panel lines and roundels, PALA only).
 - Workshop livery tag `P220 Primrose`.
