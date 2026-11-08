@@ -11,7 +11,7 @@ FPR = {'nose': (0.0, 0.9), 'cockpit_F': (0.9, 3.2), 'cockpit_R': (3.2, 9.5), 'fu
 JOINTS = (9.5, 13.5, 22.0, 30.5)
 FRAME_P = 2 * WIN_P                               # 1.12 m, every second window pitch
 FR_D0, FR_D1 = CAB_D0 + 0.30, 37.6                # no frames in the flight deck (the cockpit lining covers it)
-FR_IN, FR_DEPTH, FR_W = 0.006, 0.045, 0.03       # inset from the skin, depth, width (inside the cargo liner at 5 cm)
+FR_IN, FR_DEPTH, FR_W = 0.015, 0.045, 0.03       # inset from the skin, depth, width (inside the cargo liner at 5 cm)
 BOX_DF, BOX_DR, BOX_X = 14.2, 18.45, 1.70        # wing centre box: front and rear spar stations, half span (wing root)
 BOX_TOP, BOX_BOT = -0.78, -1.82
 WSPAR_F, WSPAR_R_IN, WSPAR_R_OUT = 0.16, 0.60, 0.66   # spar chord fractions (inner rear spar ahead of the gear bay)
@@ -60,8 +60,11 @@ def open_spans(a, b):
 def ring_frame(m, d, depth, width, mat, n=24, mask=True):
     """Ring frame hugging the skin at station d (rectangular section), interrupted at openings."""
     angs = [2 * math.pi * i / n for i in range(n)]
-    rings = [[fus_pt(dd, a, off) for a in angs] for dd, off in ((d - width / 2, FR_IN), (d + width / 2, FR_IN),
-                                                                    (d + width / 2, FR_IN + depth), (d - width / 2, FR_IN + depth))]
+    # where the fuselage tapers (nose, tail cone) the frame's outer edge would cut the sloping skin: sink it by the taper
+    sa, sb = fus(d - width / 2), fus(d + width / 2)
+    ins = FR_IN + max(abs(sa[1] - sb[1]), abs(sa[2] - sb[2]), abs(sa[3] - sb[3]))
+    rings = [[fus_pt(dd, a, off) for a in angs] for dd, off in ((d - width / 2, ins), (d + width / 2, ins),
+                                                                    (d + width / 2, ins + depth), (d - width / 2, ins + depth))]
     m.loft(rings, mat, wrap=True, keep=(lambda c: not no_go(c)) if mask else None)
 
 
@@ -124,6 +127,25 @@ def bulkhead_ribs(m, d, face, STR, n=8):
             m.bm.faces.new([m.bm.verts.new(v.co) for v in f.verts]).material_index = m.mat(STR)
         ob.bm.free()
     m.cyl((0, Y(dd), zc), 'Y', 0.14, 0.05, STR, seg=16)
+
+
+def tail_bulkhead(m, d, STR, n=32):
+    """0.4.2: a closed bulkhead at the front of the tail cone, so a tail that breaks away shows a stiffened wall,
+    not a hollow shell. Flat disc just inside the skin, both faces (the game culls back faces), stiffeners on the
+    forward face."""
+    _, hw, zt, zb = fus(d); zc = (zt + zb) / 2
+    mi = m.mat(STR); rings = []
+    for side in (0, 1):                      # a closed 2 cm slab, so the normals come out facing both ways
+        dd = d + (0.02 if side else 0.0)
+        ring = [m.bm.verts.new(fus_pt(dd, 2 * math.pi * k / n, 0.02)) for k in range(n)]
+        c = m.bm.verts.new(Vector((0, Y(dd), zc))); rings.append(ring)
+        for k in range(n):
+            a, b = ring[k], ring[(k + 1) % n]
+            f = m.bm.faces.new([c, a, b] if side else [c, b, a]); f.material_index = mi
+    for k in range(n):
+        a0, b0, a1, b1 = rings[0][k], rings[0][(k + 1) % n], rings[1][k], rings[1][(k + 1) % n]
+        m.bm.faces.new([a0, b0, b1, a1]).material_index = mi
+    bulkhead_ribs(m, d, -1, STR)
 
 
 def centre_box(m, MECH, STR):
@@ -272,7 +294,9 @@ def structure(name, m):
         if name == 'cockpit_F': bulkhead_ribs(m, 0.9, -1, STR)
         if name == 'fuselage_R':
             bulkhead_ribs(m, 30.5, 1, STR); ring_frame(m, 30.5 - 0.05, 0.085, 0.05, MECH)
-        if name == 'tail': ring_frame(m, 30.5 + 0.05, 0.085, 0.05, MECH)
+        if name == 'tail':
+            ring_frame(m, 30.5 + 0.05, 0.085, 0.05, MECH)
+            tail_bulkhead(m, 30.62, STR)
         if name == 'nose': nose_radar(m)
     for w in ('wing1a', 'wing1b', 'wing2', 'wing3'):
         if name in (w + '_L', w + '_R'): wing_struct(m, w, -1 if name.endswith('_L') else 1)
@@ -280,7 +304,7 @@ def structure(name, m):
     if name in ('engine_L', 'engine_R'): engine_struct(m, (-1 if name.endswith('_L') else 1) * 5.35, -2.25)
 
 
-# ------------------------------------------------------------------ engine core (the engine inside each nacelle)
+# ------------------------------------------------------------------ engine core (the author 2026-11-02: the engine inside each nacelle)
 # The core sits inside the core cowl (13.36-16.5, r 0.42-0.62): compressor, combustor and turbine cases with flanges, fuel
 # manifold, accessory gearbox, pipes, and the mounts: a forward mount on the fan case top, upper and lower bifurcation
 # struts across the bypass duct carrying the aft mount and the services, and a last turbine stage seen in the core exhaust
@@ -310,7 +334,7 @@ def engine_struct(m, cx, cz):
     for sg in (-1, 1): m.box(c0(13.55) + Vector((sg * 0.12, 0, 1.015)), (0.05, 0.22, 0.10), MECH)
     m.box(c0(13.55) + Vector((0, 0, 1.06)), (0.32, 0.26, 0.04), MECH)
     # bifurcation struts across the bypass duct (top carries the aft mount, bottom the services): thin streamlined walls
-    for top in (1, -1):
+    for top in ():      # 0.4.5 (read as a strut across the fan): no bifurcation walls in the bypass duct
         rings = []
         for dd in drange(14.9, 16.3, 0.35):
             r0 = prof_r([(13.36, 0.42), (14.06, 0.52), (14.96, 0.60), (16.5, 0.62)], dd) - 0.01; r1 = prof_r(NAC_IN, dd) + 0.01

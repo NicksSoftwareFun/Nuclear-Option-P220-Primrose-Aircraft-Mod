@@ -8,7 +8,7 @@ P220_skin_dmg_n.png."""
 import sys, os, math, time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, '/mnt/project-files/tu22/art/scripts/tex')
 from tex_paint import vnoise
 
 NOSE_Y = 19.35
@@ -19,6 +19,17 @@ CHAR = np.array([40, 42, 44], np.float32) / 255           # dark charcoal letter
 YEL = np.array([244, 214, 92], np.float32) / 255          # primrose petals
 YEL2 = np.array([226, 150, 40], np.float32) / 255         # primrose eye
 SM_WHITE, SM_OLIVE = 0.80, 0.72                           # gloss paint smoothness
+LIVERY = os.environ.get('P220_LIVERY', 'plink')          # plink (P-LINK Demonstrator) | civil | pala
+OFFW = np.array([238, 234, 226], np.float32) / 255        # civil: warm off-white
+PINK = np.array([196, 146, 148], np.float32) / 255        # civil: dusty pink
+PINK_D = np.array([150, 92, 98], np.float32) / 255        # civil: deeper rose for lines and stencils
+AFGREY = np.array([118, 123, 127], np.float32) / 255      # pala: tanker grey (matte)
+AFLINE = np.array([62, 66, 70], np.float32) / 255         # pala: panel line / stencil dark grey
+STBLK = np.array([28, 29, 30], np.float32) / 255          # pala: black stencils
+PRED = np.array([146, 4, 0], np.float32) / 255            # pala red (roundel ring)
+RESC = np.array([232, 180, 30], np.float32) / 255         # rescue yellow
+FONT_ST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logos', 'AllertaStencil-Regular.ttf')
+LOGO_PALA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logos', 'pala_roundel_color_2048.png')
 FONT_B = '/usr/share/fonts/opentype/inter/Inter-ExtraBold.otf'
 FONT_S = '/usr/share/fonts/opentype/inter/Inter-Bold.otf'
 
@@ -40,7 +51,12 @@ def pchip_np(tab, d):
         out.append(h00 * v[i] + h10 * hh * m[i] + h01 * v[i + 1] + h11 * hh * m[i + 1])
     return out
 def fus_rho(d, x, z, ex=2.2):
-    hw, zt, zb = pchip_np(FUS, d); zc, hh = (zt + zb) / 2, (zt - zb) / 2
+    hw, zt, zb = pchip_np(FUS, d)
+    # 0.4.14: blunt paraboloid radome ahead of d 0.35, as in p220_parts.fus
+    h1, t1, b1 = pchip_np(FUS, np.array([0.35])); zc1, hh1 = (t1[0] + b1[0]) / 2, (t1[0] - b1[0]) / 2
+    tn = np.clip(np.asarray(d, np.float64) / 0.35, 0, 1); sq = np.sqrt(tn); zcn = -0.71 + (zc1 + 0.71) * tn; tip = np.asarray(d) < 0.35
+    hw = np.where(tip, np.maximum(h1[0] * sq, 1e-3), hw); zt = np.where(tip, zcn + hh1 * sq, zt); zb = np.where(tip, zcn - hh1 * sq, zb)
+    zc, hh = (zt + zb) / 2, np.maximum((zt - zb) / 2, 1e-3)
     return (np.abs(x) / hw) ** ex + (np.abs(z - zc) / hh) ** ex, zt
 
 WING = [(0.0, 12.9, 8.6, 0.13), (1.86, 13.87, 6.46, 0.13), (6.1, 16.2, 4.13, 0.12), (17.2, 22.0, 1.65, 0.10), (17.45, 22.35, 1.30, 0.09)]
@@ -165,6 +181,44 @@ class Painter:
         a = np.zeros(len(self.C), np.float32); a[I] = acc / len(self.SS)
         self.put(np.ones(len(self.C), bool), a, rgb, sm)
 
+    def stamp_side_rgba(self, img, sel, side, dc, zc, width, ang=0.0, sm=None):
+        """Colour decal (float RGBA array, straight alpha) seen from the given side."""
+        h = width * img.shape[0] / img.shape[1]
+        I = np.flatnonzero(sel & self.facing(side))
+        if len(I) == 0: return
+        u, v = self.side_uv(side, dc, zc, width, h, ang)
+        I = I[(u[I] > -0.1) & (u[I] < 1.1) & (v[I] > -0.3) & (v[I] < 1.3)]
+        if len(I) == 0: return
+        pre = img[..., :3] * img[..., 3:4]
+        acc = np.zeros((len(I), 4), np.float32)
+        for dd, xx, zz in self.ss_points(I):
+            uu, vv = self.side_uv(side, dc, zc, width, h, ang, dd, zz)
+            acc[:, 3] += sample(img[..., 3], uu, vv)
+            for c in range(3): acc[:, c] += sample(pre[..., c], uu, vv)
+        acc /= len(self.SS)
+        a = acc[:, 3]; rgb = acc[:, :3] / np.maximum(a, 1e-6)[:, None]
+        self.col[I] = self.col[I] * (1 - a[:, None]) + rgb * a[:, None]
+        if sm is not None: self.sm[I] = self.sm[I] * (1 - a) + sm * a
+        self.paint_mask[I] = np.maximum(self.paint_mask[I], a)
+
+    def stamp_top_rgba(self, img, sel, xc, dc, width, up=True):
+        h = width * img.shape[0] / img.shape[1]
+        cx = xc if up else -xc
+        def uvat(d, x):
+            vx = x if up else -x; return (vx - cx) / width + 0.5, (-(d - dc)) / h + 0.5
+        fac = self.N[:, 2] > 0.4 if up else self.N[:, 2] < -0.4
+        I = np.flatnonzero(sel & fac)
+        if len(I) == 0: return
+        u, v = uvat(self.d[I], self.x[I]); I = I[(u > -0.1) & (u < 1.1) & (v > -0.3) & (v < 1.3)]
+        if len(I) == 0: return
+        pre = img[..., :3] * img[..., 3:4]; acc = np.zeros((len(I), 4), np.float32)
+        for dd, xx, zz in self.ss_points(I):
+            uu, vv = uvat(dd, xx); acc[:, 3] += sample(img[..., 3], uu, vv)
+            for c in range(3): acc[:, c] += sample(pre[..., c], uu, vv)
+        acc /= len(self.SS); a = acc[:, 3]; rgb = acc[:, :3] / np.maximum(a, 1e-6)[:, None]
+        self.col[I] = self.col[I] * (1 - a[:, None]) + rgb * a[:, None]
+        self.paint_mask[I] = np.maximum(self.paint_mask[I], a)
+
     def stamp_top(self, mask, sel, xc, dc, width, rgb, up=True, ang=0.0):
         """Seen from above (up=True, nose at the top of the view) or below (up=False, nose at the top, viewer under it)."""
         h = width * mask.shape[0] / mask.shape[1]
@@ -182,6 +236,55 @@ class Painter:
             uu, vv = uvat(dd, xx); acc += sample(mask, uu, vv)
         al = np.zeros(len(self.C), np.float32); al[I] = acc / len(self.SS)
         self.put(np.ones(len(self.C), bool), al, rgb)
+
+
+_RND = {}
+def pala_roundel():
+    """The PALA roundel with its open centre filled white (the faction's white field), as a float RGBA array."""
+    if 'r' not in _RND:
+        im = Image.open(LOGO_PALA).convert('RGBA'); im = im.resize((im.width // 2, im.height // 2), Image.LANCZOS)
+        a = im.getchannel('A'); w, h = im.size
+        fill = Image.new('L', (w, h), 0); ImageDraw.Draw(fill)
+        mask = a.point(lambda v: 255 if v > 8 else 0)
+        ImageDraw.floodfill(mask, (w // 2, int(h * 0.29)), 128)        # open area inside the ring, round the triangle
+        inner = mask.point(lambda v: 255 if v == 128 else 0)
+        base = Image.new('RGBA', (w, h), (232, 232, 230, 0)); base.putalpha(inner)
+        base.alpha_composite(im)
+        _RND['r'] = np.asarray(base, np.float32) / 255
+    return _RND['r']
+
+
+def pala_marks(M, side, fin, on_hull):
+    """PALA air force markings, one side: fin roundel, red fin-tip band, serial, fuselage wordmark, nose number, rescue."""
+    d, z = M.d, M.z
+    rnd = pala_roundel()
+    M.stamp_side_rgba(rnd, fin, side, 35.25, 4.80, 1.55)
+    fp = M.fp; aa = lambda dist: np.clip(0.5 - dist / fp, 0, 1)
+    tip = fin & M.facing(side, 0.0)
+    M.put(tip, aa(np.abs(z - 6.78) - 0.17), PRED)
+    M.put(tip, aa(np.abs(np.abs(z - 6.78) - 0.19) - 0.018), STBLK)
+    M.stamp_side(text_mask('AF 24-0220', FONT_ST), fin, side, 34.05, 3.55, 1.9, rgb=STBLK)
+    M.stamp_side(text_mask('P  A  L  A', FONT_ST), on_hull, side, 9.6, 1.32, 3.4, rgb=STBLK)
+    M.stamp_side(text_mask('0220', FONT_ST), on_hull, side, 2.6, -0.55, 0.62, rgb=STBLK)
+    # rescue: door-ejector access panel just aft of the forward door, bottom level with the door sill, under the windows
+    sel = on_hull & M.facing(side, 0.2)
+    d0, d1, z0, z1 = 5.85, 6.40, -0.60, -0.17
+    L = 0.11; t = 0.022
+    for dc in (d0, d1):
+        for zc in (z0, z1):
+            hz = aa(np.abs(z - zc) - t) * aa(np.abs(d - (dc + (L / 2 if dc == d0 else -L / 2))) - L / 2)
+            vt = aa(np.abs(d - dc) - t) * aa(np.abs(z - (zc + (L / 2 if zc == z0 else -L / 2))) - L / 2)
+            M.put(sel, np.maximum(hz, vt), RESC)
+    M.stamp_side(text_mask('RESCUE', FONT_ST), sel, side, (d0 + d1) / 2, z1 + 0.09, 0.42, rgb=RESC)
+    M.stamp_side(text_mask('DOOR RELEASE', FONT_ST), sel, side, (d0 + d1) / 2, (z0 + z1) / 2, 0.48, rgb=STBLK)
+
+
+def pala_wing_marks(M, wing):
+    """Medium roundel on the starboard wing top and the port wing bottom (PB-22 / stock convention)."""
+    rnd = pala_roundel(); s = 10.0
+    dc = float(lerp_np(WING, s, 1) + 0.28 * lerp_np(WING, s, 2))
+    M.stamp_top_rgba(rnd, wing, s, dc, 1.35, up=True)
+    M.stamp_top_rgba(rnd, wing, -s, dc, 1.35, up=False)
 
 
 def paint(maps, outdir):
@@ -210,30 +313,57 @@ def paint(maps, outdir):
     cov_o = (on_hull * aa(d - bound) * np.where((d > 8.6) & (d < 24.9), aa(zline - z), 1.0)).astype(np.float32)
     cov_o = np.maximum(cov_o, olive_extra.astype(np.float32))
     olive = cov_o > 0.5
-    M.col = M.col * (1 - cov_o[:, None]) + OLIVE[None] * cov_o[:, None]; M.sm = M.sm * (1 - cov_o) + SM_OLIVE * cov_o
-    # dark red pinstripe along the break, 5 cm, set 4 cm into the white
-    M.put(on_hull, band(d - bound - 0.065, 0.025), DRED)
-    # ------------------------------------------------------------ nacelles: dark red lip ring
+    fin = M.part('vstab_', 'rudder_', 'fintip', 'ruddertip')
     eng = M.part('engine_')
+    ACC = DRED                                                         # door outlines, lip rings, small stencils
+    if LIVERY == 'plink':
+        M.col = M.col * (1 - cov_o[:, None]) + OLIVE[None] * cov_o[:, None]   # (0.4.14) one smoothness for every livery: the m map is shared, so paint-scheme gloss differences showed through other liveries
+        # dark red pinstripe along the break, 5 cm, set 4 cm into the white
+        M.put(on_hull, band(d - bound - 0.065, 0.025), DRED)
+    elif LIVERY == 'civil':
+        # Primeva Link line service: warm off-white overall, dusty pink fin and nacelles, a pink cheatline under the
+        # windows that sweeps up into the fin root
+        M.col[:] = OFFW; ACC = PINK_D
+        M.put(fin, np.ones(len(d), np.float32), PINK)
+        M.put(eng, np.ones(len(d), np.float32), PINK)
+        zc = -0.20 + np.clip(d - 27.0, 0, None) * 0.20                 # cheatline centre, rising aft of the rear doors
+        M.put(on_hull & (d > 2.2) & (d < 35.2), band(z - zc, 0.12) * aa(2.4 - d), PINK)
+        M.put(on_hull & (d > 2.2) & (d < 35.2), band(z - (zc - 0.22), 0.025) * aa(2.4 - d), PINK_D)
+    elif LIVERY == 'pala':
+        # PALA air force tanker/transport: one matte grey overall, black and dark grey stencils
+        M.col[:] = AFGREY; ACC = STBLK
+    # ------------------------------------------------------------ nacelles: dark red lip ring
     for sx in (-1, 1):
         cx, cz = sx * 5.35, -2.25
         r = np.hypot(x - cx, z - cz)
         ring = eng & (np.abs(x - cx) < 1.3) & (r > 0.97)
-        M.put(ring, aa(d - 13.08), DRED)
-        M.put(ring, band(d - 13.14, 0.02), DRED)   # thin second line
+        if LIVERY != 'pala':
+            M.put(ring, aa(d - 13.08), ACC if LIVERY == 'plink' else OFFW)
+            M.put(ring, band(d - 13.14, 0.02), ACC)   # thin second line
     # ------------------------------------------------------------ lettering
-    t_prim = text_mask('PRIMROSE'); t_link = text_mask('P-LINK', FONT_S); t_pds = text_mask('PDS1')
+    t_prim = text_mask('PRIMROSE'); t_link = text_mask('P-LINK', FONT_S); t_link_m = t_link[:, ::-1].copy(); t_pds = text_mask('PDS1')
     t_fin = text_mask('P220'); t_reg = text_mask('PL-0001', FONT_S)
+    lean = 38.0
+    fin_ang = lambda side: (90 - lean) if side < 0 else (-90 + lean)   # starboard reads top to bottom (upright letters)
     for side in (-1, 1):
-        M.stamp_side(t_prim, on_hull, side, 9.15, 1.30, 6.6, rgb=WHITE, sm=SM_WHITE)
-        M.stamp_side(t_link, on_hull, side, 8.10, 0.02, 1.75, rgb=WHITE, sm=SM_WHITE)
-        M.stamp_side(t_pds, on_hull, side, 27.05, 0.55, 1.9, rgb=WHITE, sm=SM_WHITE)
-        M.stamp_side(t_reg, on_hull, side, 2.55, -0.55, 0.95, rgb=WHITE, sm=SM_WHITE)
-        # fin: big dark "P220" running up the fin, leaning back with the sweep, readable from both sides
-        fin = M.part('vstab_', 'rudder_')
-        lean = 38.0
-        M.stamp_side(t_fin, fin, side, 34.55, 4.45, 4.3, ang=(90 - lean) if side < 0 else (-90 + lean), rgb=CHAR)   # starboard reads top to bottom (upright letters)
-        # (0.3.27b: no fin emblem for now)
+        if LIVERY == 'plink':
+            M.stamp_side(t_prim, on_hull, side, 9.15, 1.30, 6.6, rgb=WHITE)
+            M.stamp_side(t_link, on_hull, side, 8.10, 0.02, 1.75, rgb=WHITE)
+            M.stamp_side(t_pds, on_hull, side, 27.05, 0.55, 1.9, rgb=WHITE)
+            M.stamp_side(t_reg, on_hull, side, 2.55, -0.55, 0.95, rgb=WHITE)
+            # fin: big dark "P220" running up the fin, leaning back with the sweep, readable from both sides
+            M.stamp_side(t_fin, fin, side, 34.55, 4.45, 4.3, ang=fin_ang(side), rgb=CHAR)
+        elif LIVERY == 'civil':
+            # only the airline name and the type: "P-LINK" above the windows, "P220" in off-white on the pink fin
+            M.stamp_side(t_link, on_hull, side, 9.6, 1.32, 4.6, rgb=PINK_D)
+            M.stamp_side(t_fin, fin, side, 34.55, 4.45, 4.3, ang=fin_ang(side), rgb=OFFW)
+            if side > 0:   # big "P-LINK" along the belly ahead of the wing, read from below, nose to tail
+                bs = M.part('belly_') & (M.N[:, 2] < -0.4); dcb = 0.5 * (M.d[bs].min() + M.d[bs].max()) + 0.9   # visible bulge starts ~1.8 m aft of the piece's buried nose   # (16:44) centred on the belly fairing
+                print('belly fairing d %.2f-%.2f centre %.2f' % (M.d[bs].min(), M.d[bs].max(), dcb))
+                M.stamp_top(t_link, M.part(*FUSE_PARTS, 'belly_'), 0.0, dcb, 5.4, PINK_D, up=False, ang=-90.0)
+        elif LIVERY == 'pala':
+            pala_marks(M, side, fin, on_hull)
+        # (0.3.27b, no fin emblem for now)
     # ------------------------------------------------------------ door and hatch outlines (dark red) and their stencils
     t_exit = text_mask('EXIT', FONT_S); t_push = text_mask('PUSH TO OPEN', FONT_S); t_cargo = text_mask('CARGO DOOR', FONT_S)
     t_res = text_mask('RESCUE', FONT_S)
@@ -244,13 +374,13 @@ def paint(maps, outdir):
         sdf = np.hypot(np.maximum(qx, 0), np.maximum(qz, 0)) + np.minimum(np.maximum(qx, qz), 0) - rr
         for side in sides:
             sel = fuse & M.facing(side, 0.15) & (rho < 1.06)
-            M.put(sel, band(sdf, 0.022), DRED)
+            M.put(sel, band(sdf, 0.022), ACC)
             if kind in ('door', 'exit'):
-                M.stamp_side(t_exit, sel, side, dc, z1 + 0.19, 0.40, rgb=DRED)
+                M.stamp_side(t_exit, sel, side, dc, z1 + 0.19, 0.40, rgb=ACC)
             if kind == 'exit':
-                M.stamp_side(t_push, sel, side, dc, z0 - 0.16, 0.95, rgb=DRED)
+                M.stamp_side(t_push, sel, side, dc, z0 - 0.16, 0.95, rgb=ACC)
             if kind == 'cargo':
-                M.stamp_side(t_cargo, sel, side, dc, z1 + 0.17 if z1 < 0 else z0 - 0.17, 1.05, rgb=DRED)
+                M.stamp_side(t_cargo, sel, side, dc, z1 + 0.17 if z1 < 0 else z0 - 0.17, 1.05, rgb=ACC)
     # rescue arrow and label on the crown above the forward doors (cut-in point, stock-style yellow/red marking)
     for side in (-1, 1):
         sel = on_hull & M.facing(side, 0.1)
@@ -258,20 +388,23 @@ def paint(maps, outdir):
     # ------------------------------------------------------------ wing and tail stencils
     t_ns = text_mask('NO STEP', FONT_S); t_walk = None
     wing = M.part('wing1a_', 'wing1b_', 'wing2_', 'wing3_')
-    flaps = M.part('flap_', 'flapin_', 'aileron_', 'spoilerin_', 'spoilerout_', 'elevator_')
+    flaps = M.part('flap_', 'flapin_', 'aileron_', 'spoilerin_', 'spoilerout_', 'elevator_', 'elevtip_')
     for sx in (-1, 1):
+        # (the author 2026-11-08) every NO STEP runs parallel to the leading edge; the innermost leading-edge one is gone
+        sweep = lambda s: math.degrees(math.atan2(lerp_np(WING, s + 0.25, 1) - lerp_np(WING, s - 0.25, 1), 0.5))
         for s, dd in ((4.4, 16.7), (8.8, 18.9), (12.5, 20.3)):
-            M.stamp_top(t_ns, flaps, sx * s, dd, 0.85, CHAR)
-        for s in (2.0, 5.0, 8.5, 12.5):                               # NO STEP along the leading edge area
+            M.stamp_top(t_ns, flaps, sx * s, dd, 0.85, CHAR, ang=-sx * sweep(s))
+        for s in (5.0, 8.5, 12.5):                                    # NO STEP along the leading edge area
             le = lerp_np(WING, s, 1); c = lerp_np(WING, s, 2)
-            M.stamp_top(t_ns, wing, sx * s, le + 0.20 * c, 0.80, CHAR)
+            M.stamp_top(t_ns, wing, sx * s, le + 0.20 * c, 0.80, CHAR, ang=-sx * sweep(s))
         # walkway lines on the inner wing top: two dark lines from the over-wing exits out to s 6
         for s_lo, s_hi in ((2.2, 6.0),):
             sel = wing & (N[:, 2] > 0.4) & (np.abs(x) > s_lo) & (np.abs(x) < s_hi) & (np.sign(x) == sx)
             le = lerp_np(WING, np.abs(x), 1); c = lerp_np(WING, np.abs(x), 2); u = (d - le) / np.maximum(c, 0.1)
             M.put(sel, np.maximum(band((u - 0.30) * c, 0.02), band((u - 0.58) * c, 0.02)), CHAR)
-        hst = M.part('hstab_')
-        M.stamp_top(t_ns, hst, sx * 2.6, 34.2, 0.75, CHAR)
+        hst = M.part('hstab_', 'hstabtip_')
+        hsweep = math.degrees(math.atan2(lerp_np(HT, 2.85, 1) - lerp_np(HT, 2.35, 1), 0.5))
+        M.stamp_top(t_ns, hst, sx * 2.6, 34.2, 0.75, CHAR, ang=-sx * hsweep)   # parallel to the stabiliser leading edge
     # ------------------------------------------------------------ intake danger markings (red chevron + DANGER)
     t_dng = text_mask('DANGER', FONT_S)
     chev = np.zeros((200, 200), np.float32)
@@ -288,23 +421,28 @@ def paint(maps, outdir):
     for side in (-1, 1):
         sel = on_hull & M.facing(side, 0.3)
         r = np.hypot(d - 3.6, z - (-0.15))
-        M.put(sel, band(r - 0.085, 0.01), DRED)
+        M.put(sel, band(r - 0.085, 0.01), ACC)
     t_fuel = text_mask('FUEL', FONT_S)
     for sx in (-1, 1):
-        M.stamp_top(t_fuel, wing, sx * 9.6, 18.9, 0.45, DRED, up=False)
+        M.stamp_top(t_fuel, wing, sx * 9.6, 18.9, 0.45, ACC, up=False)
+    if LIVERY == 'pala': pala_wing_marks(M, wing)
     # ------------------------------------------------------------ panel lines (height field, metres)
-    def height(P):
+    def height(P, ws=1.0, painted=False):
         dd = NOSE_Y - P[:, 1]; xx = P[:, 0]; zz = P[:, 2]
         h = np.zeros(len(P), np.float32)
-        g = lambda dist, w=0.006: np.clip(1 - np.abs(dist) / w, 0, 1)
+        g = lambda dist, w=0.006: np.clip(1 - np.abs(dist) / (w * ws), 0, 1)
         # fuselage: circumferential joints at the production breaks and every second frame; lap joints along
         rr, _ = fus_rho(dd, xx, zz)
         hull = rr < 1.06
+        if painted:   # PALA painted lines: production joints and lap lines only, never through a door
+            for d0, d1, z0, z1, sides, kind in DOOR_RECTS:
+                for sd in sides:
+                    hull = hull & ~((xx * sd > 0.05) & (dd > d0 - 0.2) & (dd < d1 + 0.2) & (zz > z0 - 0.2) & (zz < z1 + 0.2))
         for j in (0.9, 3.2, 9.5, 13.5, 22.0, 30.5, 34.4):
             h -= hull * g(dd - j)
         for k in range(1, 18):
             fr = 5.92 + 2.24 * k
-            if fr < 37: h -= 0.6 * hull * g(dd - fr, 0.004)
+            if fr < 37 and not painted: h -= 0.6 * hull * g(dd - fr, 0.004)
         for zl in (1.45, -0.95):
             h -= 0.7 * hull * (dd > 3.4) * (dd < 33.0) * g(zz - zl, 0.004)
         # wings: spar and rib lines on both skins
@@ -326,7 +464,14 @@ def paint(maps, outdir):
     # light grime in the panel lines and a whisper of paint variation (stock: clean, sparse wear)
     groove = np.clip(-H[0], 0, 1)
     nz = vnoise(P, 2.5, seed=5, octaves=3)
-    M.col *= (1 - 0.10 * groove * (1 - M.paint_mask))[:, None]
+    if LIVERY == 'pala':   # KC-135 style: every panel joint reads as a distinct dark line on the matte grey
+        # (the 6 mm lines were sub-texel at 2K and read as artifacts) painted lines ~3.5 cm wide, a smooth
+        # tent profile so they stay antialiased; the shared normal-map grooves stay as they are
+        gw = np.clip(-height(P, 6.0, painted=True), 0, 1) ** 0.8
+        gl = np.clip(gw * 1.15, 0, 1) * (1 - 0.7 * M.paint_mask)
+        M.col = M.col * (1 - 0.6 * gl[:, None]) + AFLINE[None] * (0.6 * gl[:, None])
+    else:
+        M.col *= (1 - 0.10 * groove * (1 - M.paint_mask))[:, None]
     M.col *= (1 + 0.012 * nz)[:, None]
     M.sm -= 0.04 * groove + 0.02 * np.clip(nz, 0, 1)
     # ------------------------------------------------------------ write
@@ -335,6 +480,8 @@ def paint(maps, outdir):
     def save(arr, name, mode):
         Image.fromarray(arr[M.inv[M.idx]].reshape((M.S, M.S) + arr.shape[1:]), mode).save(os.path.join(outdir, name), compress_level=6)
         print('wrote', name)
+    if LIVERY != 'plink':   # the other liveries only change the colour map (n/m/ao/damage maps are shared, as stock)
+        save(q8(np.clip(M.col, 0, 1)), 'P220_skin_%s_b.png' % LIVERY, 'RGB'); print('done', LIVERY, '%.1fs' % (time.time() - t0)); return
     save(q8(np.clip(M.col, 0, 1)), 'P220_skin_b.png', 'RGB')
     save(q8(nrm * 0.5 + 0.5), 'P220_skin_n.png', 'RGB')
     sm = np.clip(M.sm, 0, 1)
@@ -343,12 +490,12 @@ def paint(maps, outdir):
     Image.fromarray((hh[M.inv[M.idx]].reshape(M.S, M.S) * 65535).astype(np.uint16)).save(os.path.join(outdir, 'P220_skin_height.png'))
     # ------------------------------------------------------------ damage colour and normal (PB-22 style)
     n1 = vnoise(P, 1.5, seed=21, octaves=3); n2 = vnoise(P, 0.6, seed=22, octaves=2)
-    burn = np.clip(0.5 + 0.9 * n1 + 0.3 * n2, 0, 1)
-    metal = np.array([168, 168, 165], np.float32) / 255; soot = np.array([58, 56, 54], np.float32) / 255
-    heat = np.array([120, 112, 104], np.float32) / 255
-    col = metal * (1 - burn[:, None]) + heat * burn[:, None]
-    col = col * (1 - np.clip(burn - 0.55, 0, 1)[:, None] * 1.6) + soot * np.clip(burn - 0.55, 0, 1)[:, None] * 1.6
-    col *= (1 + 0.02 * n2)[:, None]; col *= (1 - 0.25 * groove)[:, None]
+    # 0.3.31: the game blends this map over the whole part as it loses health, and every stock damage colour map is
+    # near white (a multiplier): only the torn rims and the soot round them are dark (added in p220_dmg_alpha.py).
+    # Here: near white with a faint mottle, slightly darker panel lines, and a few rare faint heat streaks.
+    streak = np.clip((vnoise(P, 0.9, seed=23, octaves=2) * 0.5 + 0.5) * 1.0 - 0.78, 0, 1) / 0.22
+    v = 0.95 + 0.025 * n1 + 0.01 * n2 - 0.06 * groove - 0.12 * streak
+    col = np.clip(v, 0, 1)[:, None] * np.array([1.0, 0.99, 0.975], np.float32)[None, :]
     db = np.concatenate([np.clip(col, 0, 1), np.ones((len(P), 1), np.float32)], 1)
     hd = 0.006 * vnoise(P, 0.35, seed=31, octaves=3)
     hdT = (0.006 * vnoise(P + e * 8 * M.T, 0.35, seed=31, octaves=3) - hd) / (e * 8)

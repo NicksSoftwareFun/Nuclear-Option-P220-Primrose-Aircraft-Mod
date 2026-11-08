@@ -37,8 +37,19 @@ FUS = [
 # Airbus tail: the crown runs almost straight under the fin (0.23 m drop to the fin trailing edge, measured off the
 # HB-JCF side photo) and the underside sweeps up to a high, small tail cone
 fus = pchip(FUS)
+# 0.4.14 ("pinched tip on the nose dome"): the table ran the radome to a point (0.05 m half width at d 0) with
+# only three rings over the first 0.9 m; ahead of d 0.35 the dome is now a blunt paraboloid (radius ~ sqrt(d)), meeting the
+# table at d 0.35 with the same width/height, and the nose part is lofted with fine rings near the tip
+NOSE_BLEND = 0.35
+_fus_tab = fus
+def fus(d):
+    if d >= NOSE_BLEND: return _fus_tab(d)
+    t = max(d, 0.0) / NOSE_BLEND; s = math.sqrt(t)
+    _, hw1, zt1, zb1 = _fus_tab(NOSE_BLEND); zc1, hh1 = (zt1 + zb1) / 2, (zt1 - zb1) / 2
+    zc = -0.71 + (zc1 + 0.71) * t
+    return (d, hw1 * s, zc + hh1 * s, zc - hh1 * s)
 # wing-to-body fairing: broad and flat-bottomed like the real one, only ~0.15 m below the fuselage keel
-# belly fairing (0.3.11: it started abruptly and ran into the weapons bay): both ends now start inside the
+# belly fairing (0.3.11, it started abruptly and ran into the weapons bay): both ends now start inside the
 # fuselage and swell out over a long taper, and the rear end is back inside the skin before the bay at d 25.2
 FAIR = [(8.6, 0.80, -1.25, -1.84), (10.2, 1.35, -1.02, -1.92), (11.8, 1.85, -0.80, -1.98), (13.4, 2.18, -0.64, -2.02),
         (15.5, 2.32, -0.60, -2.03), (19.5, 2.35, -0.60, -2.03), (21.6, 2.18, -0.63, -2.01), (23.0, 1.72, -0.78, -1.96),
@@ -123,7 +134,7 @@ def fsec(d, n=FN, ex=2.2):
     angs = [2 * math.pi * i / n for i in range(n)]
     # the extra edge angles only matter where the doors, windows and bay are cut; in the nose and the tail cone they
     # are frozen at their values at the ends of that stretch, so they never cross the regular angles from one ring to
-    # the next (that twisted quads into creases under the nose tip, 0.3.10)
+    # the next (that twisted quads into creases under the nose tip, the author 0.3.10)
     da = min(max(d, 3.2), 30.0)
     _, hw_, zt_, zb_ = fus(da); zc_, hh_ = (zt_ + zb_) / 2, (zt_ - zb_) / 2
     for z in EXTRA_Z:
@@ -222,7 +233,7 @@ def windscreen_open(q):
     if any(abs(p.x) < 0.02 for p in q) or len({p.x > 0 for p in q}) > 1: return False
     cs = [pane_coords(p) for p in q]
     return any(all(in_quad(c, pane_poly(quad)) for c in cs) for quad in PANES)
-# The skin is cut exactly along each pane (0.3.10: the old stepped cut left spiky skin over the glass). Work in
+# The skin is cut exactly along each pane (0.3.10, the old stepped cut left spiky skin over the glass). Work in
 # the pane's (station, section angle) space: each skin quad that crosses a pane outline is split into convex pieces
 # outside the pane, mapped back onto the quad bilinearly so the cut edges stay on the original quad edges.
 _PCONV = {}
@@ -263,7 +274,9 @@ def _subtract(poly, conv):
     return pieces
 def _area(poly): return 0.5 * sum(poly[i][0] * poly[(i + 1) % len(poly)][1] - poly[(i + 1) % len(poly)][0] * poly[i][1] for i in range(len(poly)))
 def windscreen_clip(q):
-    if any(abs(p.x) < 0.02 for p in q) or len({p.x > 0 for p in q}) > 1: return None
+    # 0.3.29: quads with a corner on the centre line are clipped too (since the 0.3.27 trim a centre-line quad reaches
+    # 0.27 m out, well past the 0.07 m centre post, and was left whole over the inner part of each front pane)
+    if len({p.x > 0 for p in q if abs(p.x) > 0.02}) > 1: return None
     return clip_quad(q, [pane_coords(p) for p in q], [pane_convex(quad) for quad in PANES])
 def clip_quad(q, cs, convs):
     """Split a skin quad (3D corners q, 2D coords cs) into the convex pieces outside every convex CCW polygon in convs.
@@ -305,12 +318,12 @@ def well_convex():
         _WCONV.append([(WELL_CX, GEAR_D - SLOT_W), (SLOT_X1, GEAR_D - SLOT_W), (SLOT_X1, GEAR_D + SLOT_W), (WELL_CX, GEAR_D + SLOT_W)])
     return _WCONV
 def well_clip(zmax_fn):
-    """Clip for skin under the main gear: lower-surface quads are cut exactly along the opening (0.3.11: the old
+    """Clip for skin under the main gear: lower-surface quads are cut exactly along the opening (0.3.11, the old
     stepped cut and its covering lip z-fought and looked jagged)."""
     def clip(q):
         if any(p.z >= zmax_fn(p) for p in q): return None
         sx = 1 if sum(p.x for p in q) > 0 else -1
-        if any(p.x * sx < 0 for p in q): return None
+        if any(p.x * sx < -0.01 for p in q): return None      # 0.4.5: the belly bottom vertex sits a hair left of x = 0 and left the right well uncut
         return clip_quad(q, [(p.x * sx, NOSE_Y - p.y) for p in q], well_convex())
     return clip
 def surf(dd, ang, pad=0.012):
@@ -453,7 +466,7 @@ def survivability(m, d0, d1, SKIN, DARK, GLASS, METAL):
             zt = fus(dd)[2]; rings.append([Vector((w * math.cos(math.pi * k / 12), Y(dd), zt - 0.04 + (h + 0.04) * math.sin(math.pi * k / 12) ** 0.6)) for k in range(13)])
         m.loft(rings, SKIN, cap0=False, cap1=False)
 
-# ------------------------------------------------------------------ cargo bay (0.3.14 blockout)
+# ------------------------------------------------------------------ cargo bay (0.3.14 blockout, the author 2026-11-01)
 # Main deck from the crew cabin's aft bulkhead to just ahead of the weapons bay: floor with roller tracks and side
 # guide rails, a lined shell (no cargo for now) (a closed crescent so it is seen from inside through damage holes),
 # an aft bulkhead, and a big pallet door in the left side at the aft end (outline only; no windows). Low detail on
@@ -519,12 +532,47 @@ def coll(name):
     if not c: c = bpy.data.collections.new(name); bpy.context.scene.collection.children.link(c)
     return c
 
-def emit(name, mesh, pivot, hull=True, hull_pad=0.0, local=False, recalc=True, hull_keep=None):
+def outward_skin(mesh):
+    """0.3.29: recalc_face_normals guesses wrong on open part-chord wing panels (open at both ends and along the slat
+    and flap edges) and turned them inside out, so the painter put the top-surface stencils on the lower skin. Point
+    each linked skin island away from the local mid-surface of the wing."""
+    bm = mesh.bm; bm.normal_update()
+    mi = next((i for i, m in enumerate(mesh.mats) if getattr(m, 'name', '') == 'P220_skin'), -1)
+    if mi < 0: return
+    faces = [f for f in bm.faces if f.material_index == mi]; seen = set()
+    cs = {f: f.calc_center_median() for f in faces}
+    for f0 in faces:
+        if f0 in seen: continue
+        isl = []; st = [f0]; seen.add(f0)
+        while st:
+            f = st.pop(); isl.append(f)
+            for e in f.edges:
+                for g in e.link_faces:
+                    if g not in seen and g.material_index == mi: seen.add(g); st.append(g)
+        score = 0.0
+        for f in isl:
+            c = cs[f]; near = [cs[g].z for g in faces if abs(cs[g].x - c.x) < 0.4 and abs(cs[g].y - c.y) < 0.4]
+            if len(near) < 2: continue
+            mid = (max(near) + min(near)) / 2
+            score += f.calc_area() * f.normal.z * (1 if c.z > mid else -1)
+        if score < 0: bmesh.ops.reverse_faces(bm, faces=isl)
+
+def emit(name, mesh, pivot, hull=True, hull_pad=0.0, local=False, recalc=True, hull_keep=None, _piece=False):
     """Create the MODEL object (origin at pivot) and its convex-hull colmesh."""
     # internal structure (p220_structure.py) rides the part it sits in; it is left out of the colmesh hull below
     nstruct = len(mesh.bm.verts)
-    structure(name, mesh)
+    if not _piece:
+        # 0.4.0 damage pieces: mark the part's own skin verts (hull source) and its content faces before the structure goes in
+        sk = mesh.bm.verts.layers.int.get(SK_LAYER) or mesh.bm.verts.layers.int.new(SK_LAYER)
+        for v in mesh.bm.verts: v[sk] = 1
+        gl = mesh.bm.faces.layers.int.get('grp') or mesh.bm.faces.layers.int.new('grp')
+        for f in mesh.bm.faces:
+            if f[gl] == 0: f[gl] = 4
+        structure(name, mesh)
     if recalc: bmesh.ops.recalc_face_normals(mesh.bm, faces=mesh.bm.faces)
+    if name.startswith(('wing1a_', 'wing2_', 'wing3_')) and not _piece: outward_skin(mesh)
+    if not _piece and SPLIT_ON and split_targets(name):
+        return split_part(name, mesh, pivot, dict(hull=hull, hull_pad=hull_pad, local=local, recalc=False, hull_keep=hull_keep))
     if name.startswith(('wheel_', 'gear_', 'engine_', 'revdoor_', 'fdoor_')) and not os.environ.get('NOBACK'):
         # open shells seen from both sides (hubs, the bypass duct through open reversers, door edges): add back faces,
         # since the game culls them
@@ -549,7 +597,8 @@ def emit(name, mesh, pivot, hull=True, hull_pad=0.0, local=False, recalc=True, h
         for v in bm.verts: v.co -= Vector(pivot)
     if hull:
         hb = bmesh.new()
-        for v in list(bm.verts)[:nstruct]:
+        sk = bm.verts.layers.int.get(SK_LAYER)
+        for v in ([v for v in bm.verts if v[sk]] if sk is not None else list(bm.verts)[:nstruct]):
             if hull_keep is None or hull_keep(v.co + (Vector((0, 0, 0)) if local else Vector(pivot))): hb.verts.new(v.co)
         bmesh.ops.convex_hull(hb, input=hb.verts)
         # keep the hull light: merge close vertices
@@ -559,8 +608,20 @@ def emit(name, mesh, pivot, hull=True, hull_pad=0.0, local=False, recalc=True, h
         bmesh.ops.recalc_face_normals(hb, faces=hb.faces)
         hm = bpy.data.meshes.new(name + '_colmesh'); hb.to_mesh(hm); hb.free()
         ho = bpy.data.objects.new(name + '_colmesh', hm); ho.location = pivot; coll('COLLISION').objects.link(ho)
+        if _piece and ('_sk' in name or name.startswith('belly_')):
+            # 0.4.2: one convex hull of a curved shell is a lens that fills half the fuselage and hits whatever sits inside
+            # (the side shell spawned damaged). The shell collides as thin hulls, one per 24 degrees of arc; the
+            # whole-piece hull above stays as the LOD mesh.
+            pts = [v.co.copy() for v in bm.verts if (sk is None or v[sk])]
+            segment_hulls(name, pts, pivot)
+    # 0.4.2: only the material slots the faces use. The FBX drops unused slots, so a split piece that kept the whole list
+    # had its sub-meshes shifted against the material list in Unity (cabin lining and bulkhead came out as glass)
+    used = sorted({f.material_index for f in bm.faces})
+    if used != list(range(len(mesh.mats))):
+        remap = {o: n for n, o in enumerate(used)}
+        for f in bm.faces: f.material_index = remap[f.material_index]
     bm.to_mesh(me); bm.free()
-    for m in mesh.mats: me.materials.append(m)
+    for i in used: me.materials.append(mesh.mats[i])
     ob = bpy.data.objects.new(name, me); ob.location = pivot; coll('MODEL').objects.link(ob)
     return ob
 
@@ -605,11 +666,13 @@ def panel(mesh, sx, s0, s1, u0, u1, m, ds=0.8, ss=None, gearcut=False, caps=(Tru
     """Wing panel loft. gearcut: open the main gear bay in the lower skin (rings get the bay edges as extra chord stations)."""
     if ss is None: ss = drange(s0, s1, ds)
     if not gearcut:
-        mesh.loft([wing_ring(s, sx, u0, u1) for s in ss], m, cap0=caps[0], cap1=caps[1]); return
-    ed = [GEAR_D + k for k in (-WELL_R, -SLOT_W, SLOT_W, WELL_R)]
-    before = set(mesh.bm.verts)
-    mesh.loft([wing_ring(s, sx, u0, u1, 14, ed) for s in ss], m, cap0=caps[0], cap1=caps[1], clip4=well_clip(lambda p: wing_at(abs(p.x))[3]))
-    bmesh.ops.remove_doubles(mesh.bm, verts=[v for v in mesh.bm.verts if v not in before], dist=0.0005)
+        mesh.loft([wing_ring(s, sx, u0, u1) for s in ss], m, cap0=caps[0], cap1=caps[1])
+    else:
+        ed = [GEAR_D + k for k in (-WELL_R, -SLOT_W, SLOT_W, WELL_R)]
+        before = set(mesh.bm.verts)
+        mesh.loft([wing_ring(s, sx, u0, u1, 14, ed) for s in ss], m, cap0=caps[0], cap1=caps[1], clip4=well_clip(lambda p: wing_at(abs(p.x))[3]))
+        bmesh.ops.remove_doubles(mesh.bm, verts=[v for v in mesh.bm.verts if v not in before], dist=0.0005)
+
 
 def quarter_point(sx, s0, s1):
     sm = (s0 + s1) / 2; le, c, t, z = wing_at(sm); return Vector((sx * sm, Y(le + 0.25 * c), z))
@@ -647,6 +710,259 @@ def nac_pt(cx, cz, dd, r, th):
 def in_door(dd, th):
     if not (REV_D0 < dd < REV_D1): return False
     th = th % 360; return any(abs(th - c) < hw for c, hw in REV_DOORS)
+# 0.3.29: the fan turns. Three separate meshes about one pivot on the engine axis (the plugin spins them from the
+# engine's RPM): the twenty blades (shown at low RPM), a blurred disc (the stock ducted-fan blur material, shown in place
+# of the blades once they turn too fast to draw), and the spinner with a white spiral so its rotation reads at any speed.
+FAN_D = 13.22
+def fan_parts(side, cx, cz, DARK, METAL):
+    WHITE = material('P220_white', (0.92, 0.93, 0.92)); BLUR = material('P220_fanblur', (0.5, 0.5, 0.5))
+    piv = Vector((cx, Y(FAN_D), cz)); ax = Vector((0, -1, 0))
+    m = Mesh()
+    for b in range(20):
+        ph = 360.0 * b / 20; rr = [0.27, 0.6, 0.92]
+        rows = []
+        for r in rr:
+            sw = 0.10 + 0.10 * (r - 0.27) / 0.65                       # half chord in angle-metres, more twist at the tip
+            pa = ph - math.degrees(sw * 0.8 / r); pb = ph + math.degrees(sw * 0.8 / r)
+            rows.append([nac_pt(cx, cz, 13.14 + 0.02 * (r - 0.27), r, pa), nac_pt(cx, cz, 13.32, r, pb)])
+        m.loft([[p for p in row] + [p + Vector((0, 0.008, 0)) for p in reversed(row)] for row in rows], METAL, cap0=True, cap1=True)
+    lathe(m, Vector((cx, Y(13.10), cz)), ax, [(0, 0.27), (0.24, 0.29)], DARK, 20)                     # blade root ring
+    emit('fan_' + side, m, piv, hull=False, recalc=False); point('fanAxis_' + side, piv)
+    # blur: one square facing forward, the stock blur texture (a soft disc with a hub hole) mapped over it
+    # 0.4.0 (the square card read as a grey plate in renders): a round 32-sided card, UVs as on the square
+    m = Mesh(); r = 0.93; d0 = Y(FAN_D - 0.02)
+    mi = m.mat(BLUR); ring = [(math.cos(2 * math.pi * k / 32), math.sin(2 * math.pi * k / 32)) for k in range(32)]
+    vs = [m.bm.verts.new(Vector((cx + r * a, d0, cz + r * b))) for a, b in ring]
+    f = m.bm.faces.new(vs); f.material_index = mi
+    uvl = m.bm.loops.layers.uv.verify()
+    for lp, (a, b) in zip(f.loops, ring): lp[uvl].uv = (0.5 + 0.5 * a, 0.5 + 0.5 * b)
+    if f.normal.y < 0: f.normal_flip()
+    emit('fanblur_' + side, m, piv, hull=False, recalc=False)
+    # spinner: black cone, white tip, one white spiral stripe from the tip to the base
+    m = Mesh(); c0 = Vector((cx, Y(12.92), cz))
+    prof = [(0, 0.0), (0.06, 0.09), (0.16, 0.18), (0.30, 0.26), (0.38, 0.28)]
+    lathe(m, c0, ax, prof[:2], WHITE, 16)
+    lathe(m, c0, ax, prof[1:], DARK, 16)
+    def spin_r(t):
+        for (a0, r0), (a1, r1) in zip(prof, prof[1:]):
+            if a0 <= t <= a1: return r0 + (r1 - r0) * (t - a0) / (a1 - a0)
+        return prof[-1][1]
+    _, u, v = frame(ax); N = 18; w = 0.030
+    for sgn in (0.0, 180.0):                                     # two opposite stripes, half a turn each
+        rows = []
+        for k in range(N + 1):
+            t = 0.06 + (0.37 - 0.06) * k / N; a = math.radians(sgn + 200.0 * k / N); rr = spin_r(t) + 0.004
+            cen = c0 + ax * t; rad = u * math.cos(a) + v * math.sin(a); tg = u * -math.sin(a) + v * math.cos(a)
+            rows.append([cen + rad * rr - tg * w, cen + rad * rr + tg * w])
+        mi = m.mat(WHITE)
+        for (a0, a1), (b0, b1) in zip(rows, rows[1:]):
+            m.bm.faces.new([m.bm.verts.new(a0), m.bm.verts.new(b0), m.bm.verts.new(b1), m.bm.verts.new(a1)]).material_index = mi
+    bmesh.ops.remove_doubles(m.bm, verts=m.bm.verts[:], dist=0.0003)
+    bmesh.ops.recalc_face_normals(m.bm, faces=m.bm.faces)
+    emit('spinner_' + side, m, piv, hull=False, recalc=False)
+
+# 0.3.29: fin fold mechanism, all inside the fin while it stands upright: a piano hinge along the starboard skin at the
+# split (knuckles alternating between the halves on one pin), two hydraulic actuators from clevis brackets low in the
+# lower fin to lugs on the upper fin's root rib on the port side (the cylinders and rods are separate meshes the game
+# aims at each other, so they extend as the fin folds), a sync bar tying the two lugs, hydraulic lines down into the
+# fin, and the wiring harness that crosses the split through a quick-disconnect connector next to the hinge.
+FOLD_ST = (0.25, 0.36)          # actuator chord stations (fraction of the fin chord at the split); 0.4.5: in the thickest part
+# 0.3.30 (much bigger, bolder pistons hauling the fin upright): anchors 1.3 m below the split, 17 cm bore
+ACT_DZ, ACT_X, LUG_DZ, LUG_X = 1.30, -0.07, 0.12, -0.09
+CRANK_L = 0.22                  # 0.4.5: crank horn length, hinge pin to clevis pin
+HINGE_Z = FIN_SPLIT - 0.11       # 0.4.5: one straight hinge line 3.6 cm inside the starboard skin, low enough that the folded crank and rod end stay under the lower fin cap
+HINGE_X = None
+def crank_pts(dd):
+    """Hinge-pin point H and crank-end point E (upright) at fin station dd; the actuator anchor sits straight below the
+    midpoint of the crank's swing so the cylinder stays near vertical through the fold."""
+    global HINGE_X
+    if HINGE_X is None: HINGE_X = fin_half_t(0.30, FIN_SPLIT) - 0.036
+    H = Vector((HINGE_X, Y(dd), HINGE_Z)); return H, H + Vector((-0.03, 0, -CRANK_L))
+def act_anchor(dd):
+    H, E = crank_pts(dd); return Vector((H.x - 0.125, Y(dd), FIN_SPLIT - ACT_DZ))     # midway between the crank end upright and folded
+def fin_at(u, z):
+    le, c, t = lerp_tab(FIN, z); return le + u * c, c, t
+def fin_half_t(u, z):
+    le, c, t = lerp_tab(FIN, z)
+    return 5 * t * (0.2969 * math.sqrt(u) - 0.126 * u - 0.3516 * u * u + 0.2843 * u ** 3 - 0.1036 * u ** 4) * c
+def fin_fold_mech(nm, m, SKIN):
+    MECH = material('P220_mech', (0.36, 0.38, 0.40)); METAL = material('P220_metal', (0.42, 0.43, 0.45))
+    DARK = material('P220_dark', (0.05, 0.05, 0.06))
+    zs = FIN_SPLIT
+    crank_pts(0.0); dA = fin_at(0.18, zs)[0]; dB = fin_at(0.40, zs)[0]     # 0.4.5: hinge run kept where the fin is thick enough
+    hx = lambda dd: fin_half_t(min(max((dd - fin_at(0, zs)[0]) / fin_at(0, zs)[1], 0.02), 0.98), zs)
+    # piano hinge: 8 knuckles, odd ones on the lower fin (with the pin), even ones on the upper fin
+    n = 8; seg = (dB - dA) / n
+    for k in range(n):
+        if (k % 2 == 0) != (nm == 'L'): continue
+        d0 = dA + k * seg + 0.01; d1 = dA + (k + 1) * seg - 0.01; xk = HINGE_X
+        rod(m, Vector((xk, Y(d0), HINGE_Z)), Vector((xk, Y(d1), HINGE_Z)), 0.022, METAL, 8)
+        zl = HINGE_Z + (-0.10 if nm == 'L' else 0.10)      # hinge leaf riveted to the inside of the skin
+        m.box(((xk - 0.012), Y((d0 + d1) / 2), (HINGE_Z + zl) / 2), (0.012, d1 - d0, abs(zl - HINGE_Z)), MECH)
+    if nm == 'L':
+        rod(m, Vector((HINGE_X, Y(dA - 0.03), HINGE_Z)), Vector((HINGE_X, Y(dB + 0.03), HINGE_Z)), 0.009, MECH, 6)   # hinge pin
+        # actuator clevis brackets on a cross beam, a torque tube between them, and pressure / return lines
+        xs = []
+        for u in FOLD_ST:
+            dd = fin_at(u, zs)[0]; za = zs - ACT_DZ; ax_ = act_anchor(dd).x; xs.append(ax_)
+            m.box((ax_, Y(dd), za - 0.10), (0.20, 0.22, 0.08), MECH)                                   # mounting pad on the spar web
+            for sg in (-1, 1): m.box((ax_, Y(dd) + sg * 0.11, za - 0.02), (0.16, 0.03, 0.16), MECH)    # clevis cheeks
+            rod(m, Vector((ax_, Y(dd) - 0.13, za)), Vector((ax_, Y(dd) + 0.13, za)), 0.022, METAL, 8)   # trunnion pin (fore-aft)
+            for k, dx in enumerate((-0.05, 0.05)):                                                      # pressure / return lines
+                rod(m, Vector((ax_ + dx, Y(dd + 0.14), za + 0.25)), Vector((ax_ + dx, Y(dd + 0.18), za - 0.45)), 0.012, METAL, 6)
+        da = fin_at(FOLD_ST[0], zs)[0]; db = fin_at(FOLD_ST[1], zs)[0]
+        rod(m, Vector((xs[0], Y(da), zs - ACT_DZ - 0.14)), Vector((xs[1], Y(db), zs - ACT_DZ - 0.14)), 0.04, MECH, 10)   # beam between the pads
+        # wiring harness up the starboard side of the lower fin to its half of the connector at the split
+        dh = fin_at(0.62, zs)[0]; xh = hx(dh) - 0.085
+        pts = [Vector((xh * 0.4, Y(dh + 0.25), zs - 1.4)), Vector((xh * 0.8, Y(dh + 0.1), zs - 0.8)), Vector((xh, Y(dh), zs - 0.30)), Vector((xh, Y(dh), zs - 0.06))]
+        for a, b in zip(pts, pts[1:]): rod(m, a, b, 0.018, DARK, 8)
+        for p in pts[1:3]: m.box((p.x, p.y, p.z), (0.03, 0.03, 0.02), MECH)            # p-clamps
+        m.box((xh, Y(dh), zs - 0.035), (0.07, 0.07, 0.05), MECH)                      # connector, fixed half
+    else:
+        # 0.4.5 (the hinge mechanism must stay captive inside the fin): a crank horn on each upper-fin hinge knuckle
+        # hangs straight down into the lower fin; the vertical actuator pulls its end, swinging the fin upright. Folded,
+        # the horn lies level just under the split, still inside the lower fin.
+        for u in FOLD_ST:
+            dd = fin_at(u, zs)[0]; H, E = crank_pts(dd)
+            rod(m, H + Vector((0, -0.07, 0)), H + Vector((0, 0.07, 0)), 0.045, MECH, 10)                 # knuckle boss on the pin
+            rod(m, H, E, 0.025, MECH, 8)                                                          # crank horn
+            for sg in (-1, 1): m.box((E.x, H.y + sg * 0.045, E.z), (0.07, 0.02, 0.09), MECH)                # clevis cheeks at the end
+            rod(m, E + Vector((0, -0.06, 0)), E + Vector((0, 0.06, 0)), 0.018, METAL, 8)                 # clevis pin (fore-aft)
+        dh = fin_at(0.62, zs)[0]; xh = hx(dh) - 0.085
+        m.box((xh, Y(dh), zs + 0.005), (0.07, 0.07, 0.03), MECH)
+        pts = [Vector((xh, Y(dh), zs + 0.02)), Vector((xh * 0.8, Y(dh - 0.05), zs + 0.5)), Vector((xh * 0.4, Y(dh - 0.15), zs + 1.2))]
+        for a, b in zip(pts, pts[1:]): rod(m, a, b, 0.016, DARK, 8)
+        m.box((pts[1].x, pts[1].y, pts[1].z), (0.05, 0.03, 0.02), MECH)
+
+def fin_fold_actuators():
+    """Cylinders (on the lower fin) and rods (on the upper fin), each built along +Y from its pivot."""
+    MECH = material('P220_mech', (0.36, 0.38, 0.40)); METAL = material('P220_metal', (0.42, 0.43, 0.45))
+    DARK = material('P220_dark', (0.05, 0.05, 0.06))
+    zs = FIN_SPLIT; o = Vector((0, 0, 0))
+    for k, u in enumerate(FOLD_ST):
+        dd = fin_at(u, zs)[0]; anc = act_anchor(dd); lug = crank_pts(dd)[1]     # 0.4.5: rod end on the crank horn
+        m = Mesh()
+        rod(m, o + Vector((0, 0.06, 0)), o + Vector((0, 0.85, 0)), 0.085, DARK, 12)                  # barrel, 17 cm bore
+        rod(m, o + Vector((0, 0.02, 0)), o + Vector((0, 0.10, 0)), 0.095, MECH, 12)                  # end cap
+        rod(m, o + Vector((0, 0.80, 0)), o + Vector((0, 0.90, 0)), 0.095, MECH, 12)                  # gland nut
+        for a in (0.30, 0.55): rod(m, o + Vector((0, a, 0)), o + Vector((0, a + 0.03, 0)), 0.092, MECH, 12)   # tie bands
+        rod(m, o + Vector((-0.10, 0, 0)), o + Vector((0.10, 0, 0)), 0.05, MECH, 10)                  # trunnion eye
+        for dx in (-0.06, 0.06):                                                                    # transfer tubes
+            rod(m, o + Vector((dx, 0.10, 0.07)), o + Vector((dx, 0.82, 0.07)), 0.013, METAL, 6)
+        emit('fincyl_%d' % (k + 1), m, anc, hull=False, local=True); point('fincyl_%d' % (k + 1), anc)
+        m = Mesh()
+        rod(m, o + Vector((0, 0.04, 0)), o + Vector((0, 0.90, 0)), 0.05, METAL, 10)                  # chromed rod
+        rod(m, o + Vector((0, 0.03, 0)), o + Vector((0, 0.14, 0)), 0.06, MECH, 10)                   # rod-end body
+        rod(m, o + Vector((-0.06, 0, 0)), o + Vector((0.06, 0, 0)), 0.055, MECH, 10)                 # rod-end eye
+        emit('finrod_%d' % (k + 1), m, lug, hull=False, local=True); point('finrod_%d' % (k + 1), lug)
+    H0 = crank_pts(fin_at(FOLD_ST[0], zs)[0])[0]; H1 = crank_pts(fin_at(FOLD_ST[1], zs)[0])[0]
+    point('fin_hinge', (H0 + H1) / 2)        # 0.4.5: the plugin folds the upper fin about this line
+
+# 0.3.29: crew cabin fit, seen through the open forward doors, the cabin windows and damage holes; kept lean on
+# triangles (simple extruded profiles, few segments). From the front: a lavatory (closed, no interior) to port and an
+# equipment / galley cabinet to starboard behind the doors, four side-facing mission stations (two each side, desk,
+# two displays, keyboard, swivel seat facing the wall), then three rows of airline seats 2 + 2, overhead bins along
+# both sides and dado panels under the windows.
+def cabin_fit(m, d0, d1, DARK, METAL):
+    LIN = material('P220_lining', (0.77, 0.78, 0.79)); SEAT = material('P220_seat', (0.17, 0.20, 0.26))
+    F = FLOOR_Z
+    def inn(dd, z, k=0.05): return skin_pt(1, dd, z).x - k              # half width of the cabin at height z
+    def has(dd): return d0 <= dd < d1
+    def prism(pts, da, db, mat):
+        """profile pts [(x, z)] extruded from station da to db, closed at both ends"""
+        m.loft([[Vector((x, Y(dd), z)) for x, z in pts] for dd in (da, db)], mat, cap0=True, cap1=True)
+    # ---- lavatory (port) and galley / equipment cabinet (starboard), between the doors and the first window
+    la, lb = 5.62, 6.62
+    if has((la + lb) / 2):
+        for sx, h in ((-1, 1.52), (1, 1.10)):
+            xo = inn((la + lb) / 2, 0.6, 0.06); xt = inn((la + lb) / 2, F + h, 0.07)
+            pts = [(0.62, F), (xo, F), (xo, 0.60), (xt, F + h), (0.62, F + h)]
+            prism([(sx * x, z) for x, z in (pts if sx > 0 else list(reversed(pts)))], la, lb, LIN)
+        # lavatory door (on the aisle side): frame, handle, occupied sign
+        x = -0.615
+        for z0, z1, dd0, dd1 in ((F + 0.05, F + 1.45, la + 0.12, la + 0.15), (F + 0.05, F + 1.45, lb - 0.15, lb - 0.12), (F + 1.42, F + 1.45, la + 0.12, lb - 0.12)):
+            m.box((x + 0.01, Y((dd0 + dd1) / 2), (z0 + z1) / 2), (0.02, dd1 - dd0, z1 - z0), DARK)
+        m.box((x + 0.02, Y(lb - 0.24), F + 0.95), (0.03, 0.10, 0.03), METAL)
+        m.box((x + 0.01, Y((la + lb) / 2), F + 1.33), (0.02, 0.14, 0.05), DARK)
+        # cabinet front: four equipment / snack drawers, a work top and a row of latches
+        x = 0.615
+        for k in range(4):
+            zc = F + 0.16 + k * 0.24
+            m.box((x - 0.01, Y((la + lb) / 2), zc), (0.02, lb - la - 0.12, 0.20), METAL)
+            m.box((x - 0.025, Y((la + lb) / 2), zc + 0.06), (0.02, 0.12, 0.025), DARK)
+        m.box((x + 0.05, Y((la + lb) / 2), F + 1.12), (0.12, lb - la, 0.03), DARK)
+    # ---- mission stations: desk against the wall, two displays, keyboard shelf, side-facing swivel seat
+    for dd in (7.05, 8.45):
+        if not has(dd): continue
+        for sx in (-1, 1):
+            # 0.3.30 (the screens clipped through the skin) every edge is set from the wall at its own height and
+            # at both ends of the station, so the console follows the curve of the fuselage instead of a vertical line
+            wall = lambda z: min(inn(dd + e, z, 0.07) for e in (-0.55, 0.0, 0.55))
+            xw = wall(F + 0.74)
+            desk = [(xw, F + 0.70), (xw - 0.55, F + 0.70), (xw - 0.55, F + 0.74), (xw, F + 0.74)]
+            prism([(sx * x, z) for x, z in desk], dd - 0.55, dd + 0.55, LIN)
+            for e in (dd - 0.5, dd + 0.5):                                   # desk side panels down to the floor
+                xs_ = min(xw, wall(F))
+                m.box((sx * (xs_ - 0.27), Y(e), F + 0.35), (0.52, 0.03, 0.70), LIN)
+            # console: sloped panel carrying two displays, its back against the wall all the way up, keyboard on the desk
+            zt = F + 1.30; xt = wall(zt)
+            pan = [(xw, F + 0.74), (xw - 0.14, F + 0.74), (xt - 0.08, zt), (xt, zt)]
+            prism([(sx * x, z) for x, z in pan], dd - 0.52, dd + 0.52, DARK)
+            f0 = Vector((xw - 0.14, F + 0.74)); f1 = Vector((xt - 0.08, zt)); fm = (f0 + f1) / 2
+            tang = (f1 - f0).normalized(); nrm2 = Vector((-tang.y, tang.x))   # inboard-facing normal of the sloped face
+            if nrm2.x > 0: nrm2 = -nrm2
+            for k, o in enumerate((-0.25, 0.25)):
+                c = Vector((sx * fm.x, Y(dd + o), fm.y))
+                nrm = Vector((sx * nrm2.x, 0, nrm2.y)).normalized()
+                a, u, v = frame(nrm)
+                fan(m, c + nrm * 0.004, [c + nrm * 0.004 + u * (0.20 * math.cos(t)) + v * (0.15 * math.sin(t)) for t in (math.pi / 4, 3 * math.pi / 4, 5 * math.pi / 4, 7 * math.pi / 4)], WINM())
+            m.box((sx * (xw - 0.30), Y(dd), F + 0.755), (0.16, 0.42, 0.02), DARK)
+            # airline seat facing the console (airline seats at the stations, not ejection seats)
+            airline_seat(m, Vector((sx * (xw - 0.78), Y(dd), F)), Vector((sx, 0, 0)), SEAT, LIN, DARK, METAL)
+            STATION_SEATS[(dd, sx)] = Vector((sx * (xw - 0.78), Y(dd), F))
+    # ---- three rows of airline seats, two each side of the aisle
+    for rd in (9.75, 10.55, 11.35):
+        if not has(rd): continue
+        for sx in (-1, 1):
+            for k in range(2):
+                airline_seat(m, Vector((sx * (0.76 + k * 0.50), Y(rd), F)), Vector((0, 1, 0)), SEAT, LIN, DARK, METAL, arms=(k == 0, True))
+    # ---- overhead bins and dado panels along the cabin (from the stations aft), one piece per fuselage part
+    ba, bb = max(d0, 6.75), min(d1, CAB_D1 - 0.05)
+    if ba < bb:
+        for sx in (-1, 1):
+            xb = min(inn(ba, 1.15, 0.06), inn(bb, 1.15, 0.06))
+            bin_ = [(xb, 0.92), (xb - 0.42, 0.98), (xb - 0.46, 1.22), (xb - 0.30, 1.42), (min(inn(ba, 1.45, 0.06), inn(bb, 1.45, 0.06)), 1.45)]
+            prism([(sx * x, z) for x, z in (bin_ if sx > 0 else list(reversed(bin_)))], ba, bb, LIN)
+            m.box((sx * (xb - 0.44), Y((ba + bb) / 2), 1.02), (0.02, bb - ba - 0.05, 0.02), DARK)   # bin latch line
+            xd = min(inn(dd_, z_, 0.03) for dd_ in (ba, bb) for z_ in (F, (F + 0.22) / 2, 0.22))
+            dado = [(xd, F), (xd - 0.03, F), (xd - 0.03, 0.22), (xd, 0.22)]
+            prism([(sx * x, z) for x, z in (dado if sx > 0 else list(reversed(dado)))], ba, bb, LIN)
+
+def airline_seat(m, base, fwd, SEAT, LIN, DARK, METAL, arms=(True, True)):
+    """Economy seat on the floor at base, facing fwd (world): cushion, reclined back with a shell and headrest, armrests, legs."""
+    F = fwd.normalized(); U = Vector((0, 0, 1)); R = F.cross(U)
+    P = lambda r, f, z: base + R * r + F * f + U * z
+    def slab(prof, w, mat):                                   # prof [(f, z)] extruded across the seat width
+        m.loft([[P(e, f, z) for f, z in prof] for e in (-w, w)], mat, cap0=True, cap1=True)
+    slab([(0.22, 0.40), (0.22, 0.47), (-0.22, 0.47), (-0.24, 0.40)], 0.22, SEAT)                 # cushion
+    slab([(-0.18, 0.47), (-0.30, 0.47), (-0.36, 1.12), (-0.26, 1.15)], 0.22, SEAT)               # back
+    slab([(-0.33, 0.62), (-0.36, 0.62), (-0.40, 1.10), (-0.37, 1.10)], 0.20, LIN)                # back shell
+    slab([(-0.31, 1.00), (-0.37, 1.00), (-0.385, 1.13), (-0.325, 1.16)], 0.15, LIN)              # headrest cover
+    for e, on in ((-0.25, arms[0]), (0.25, arms[1])):
+        if on: slab_arm(m, P(e, -0.03, 0.64), F, R, DARK)
+    for e in (-0.18, 0.18):
+        m.loft([[P(e + a, f, z) for f, z in ((0.15, 0.0), (-0.20, 0.0), (-0.20, 0.40), (0.15, 0.40))] for a in (-0.015, 0.015)], METAL, cap0=True, cap1=True)
+
+def slab_arm(m, c, F, R, mat):
+    pts = lambda a: [c + R * a + F * f + Vector((0, 0, z)) for f, z in ((0.18, -0.02), (-0.22, -0.02), (-0.22, 0.02), (0.18, 0.02))]
+    m.loft([pts(-0.02), pts(0.02)], mat, cap0=True, cap1=True)
+
+STATION_SEATS = {}
+_WIN = []
+def WINM():
+    if not _WIN: _WIN.append(material('P220_window', (0.07, 0.08, 0.10)))
+    return _WIN[0]
+
 def engine(sx, side, cx, cz, SKIN, DARK, METAL, BAY):
     m = Mesh(); ths = [360.0 * i / NSEG for i in range(NSEG)]
     def stations(prof, extra):
@@ -670,19 +986,11 @@ def engine(sx, side, cx, cz, SKIN, DARK, METAL, BAY):
         dds = drange(REV_D0, REV_D1, 0.3)
         for th in (a0, a1):
             m.loft([[nac_pt(cx, cz, dd, prof_r(NAC_OUT, dd), th) for dd in dds], [nac_pt(cx, cz, dd, prof_r(NAC_IN, dd), th) for dd in dds]], BAY, cap0=False, cap1=False, quads=lambda i: i < len(dds) - 1)
-    # fan: spinner, twenty swept blades, dark disc behind; core cowl visible through the bypass duct
+    # dark disc behind the fan and the core cowl visible through the bypass duct (fixed to the nacelle)
     ax = Vector((0, -1, 0))
-    lathe(m, Vector((cx, Y(12.92), cz)), ax, [(0, 0.0), (0.06, 0.09), (0.16, 0.18), (0.30, 0.26), (0.38, 0.28)], METAL, 12)
     lathe(m, Vector((cx, Y(13.36), cz)), ax, [(0, 0.95), (0, 0.0)], DARK, 20)
-    for b in range(20):
-        ph = 360.0 * b / 20; rr = [0.27, 0.6, 0.92]
-        rows = []
-        for r in rr:
-            sw = 0.10 + 0.10 * (r - 0.27) / 0.65                       # half chord in angle-metres, more twist at the tip
-            pa = ph - math.degrees(sw * 0.8 / r); pb = ph + math.degrees(sw * 0.8 / r)
-            rows.append([nac_pt(cx, cz, 13.14 + 0.02 * (r - 0.27), r, pa), nac_pt(cx, cz, 13.32, r, pb)])
-        m.loft([[p for p in row] + [p + Vector((0, 0.008, 0)) for p in reversed(row)] for row in rows], DARK, cap0=True, cap1=True)
     lathe(m, Vector((cx, Y(13.36), cz)), ax, [(0, 0.42), (0.7, 0.52), (1.6, 0.60), (3.14, 0.62)], METAL, 16)
+    fan_parts(side, cx, cz, DARK, METAL)
     # chevron fan nozzle: fourteen thin teeth trailing from the cowl lip, toed slightly in
     NT = 12; r0 = prof_r(NAC_OUT, 16.85); ri = prof_r(NAC_IN, 16.85)
     for k in range(NT):
@@ -742,7 +1050,7 @@ def build():
         step = 0.2 if name == 'cockpit_F' else (0.5 if (d0 < 6 or d1 > 30) else 1.0)
         brk = [b for b in FUS_BREAKS if d0 < b < d1]
         ds = sorted([x for x in drange(max(d0, 0.0), d1, step) if all(abs(x - b) > 0.04 for b in brk)] + brk)
-        if name == 'nose': ds[0] = 0.0
+        if name == 'nose': ds = [NOSE_BLEND * u * u for u in (0.035, 0.1, 0.18, 0.27, 0.37, 0.48, 0.6, 0.73, 0.86, 1.0)] + [0.5, 0.65, 0.78, 0.9]
         # 0.3.23: the cockpit_F / cockpit_R joint at d 3.2 sits right across the crew seats; its end caps were a solid grey
         # disc inside the flight deck (covering the bulkhead, cutting the seats). Leave that joint open on both parts.
         # 0.3.25 structure pass: production breaks are open (the frames either side show when a section breaks away);
@@ -751,8 +1059,10 @@ def build():
         if STRUCT_ON: c0, c1 = name in ('nose', 'cockpit_F'), name in ('fuselage_R', 'tail')
         else: c0, c1 = name != 'cockpit_R', name != 'cockpit_F'
         m.loft([fsec(d) for d in ds], SKIN, cap0=c0, cap1=c1, keep=lambda c: not (in_nose_bay(c) or skin_open(c)),
-               clip4=windscreen_clip if name == 'cockpit_F' else (well_clip(lambda p: -1.0) if name == 'fuselage' else None))
-        if name in ('cockpit_F', 'fuselage'): bmesh.ops.remove_doubles(m.bm, verts=m.bm.verts, dist=0.0005)
+               clip4=windscreen_clip if name in ('cockpit_F', 'cockpit_R') else (well_clip(lambda p: -1.0) if name == 'fuselage' else None))
+        # 0.4.11: the side windows run aft to d 3.45, past the cockpit_F / cockpit_R joint at d 3.2, and cockpit_R was
+        # never cut, so its skin covered the rear of each side window from inside; it is clipped by the panes too now
+        if name in ('cockpit_F', 'cockpit_R', 'fuselage'): bmesh.ops.remove_doubles(m.bm, verts=m.bm.verts, dist=0.0005)
         # cabin window band: 10 rows of windows into the crew cabin, each a skin panel with a rounded opening, a shallow
         # reveal and a glass pane
         hd, hz, zc = WIN_P / 2, (ZB - ZA) / 2, (ZA + ZB) / 2
@@ -765,18 +1075,15 @@ def build():
                 m.loft([[skin_pt(sx, wd + a, zc + b) for a, b in rect], lip], SKIN, cap0=False, cap1=False)
                 m.loft([lip, [skin_pt(sx, wd + a, zc + b, -0.08) for a, b in ell]], BAY, cap0=False, cap1=False)
                 fan(m, skin_pt(sx, wd, WZ, -0.02), [skin_pt(sx, wd + a, zc + b, -0.02) for a, b in ell], GLASS)
+        gl = m.bm.faces.layers.int.get('grp') or m.bm.faces.layers.int.new('grp')
+        for f in m.bm.faces: f[gl] = 1             # 0.4.0: the skin and window band are cut face by face into the damage pieces
         # crew cabin blockout behind the flight deck: floor, bulkheads and five rows of paired seats each side
         fa, fb = max(d0, CAB_D0), min(d1, CAB_D1)
         if fa < fb:
             fx = lambda dd: skin_pt(1, dd, FLOOR_Z).x - 0.03
             m.loft([[Vector((-fx(dd), Y(dd), FLOOR_Z)), Vector((fx(dd), Y(dd), FLOOR_Z))] for dd in drange(fa, fb, 0.5)], BAY,
                    cap0=False, cap1=False, quads=lambda i: i == 0)
-        for row in range(5):
-            rd = WIN_D0 + WIN_P / 2 - 0.05 + row * 2 * WIN_P
-            if not (d0 <= rd < d1): continue
-            for x in (-1.15, -0.65, 0.65, 1.15):
-                m.box((x, Y(rd), FLOOR_Z + 0.25), (0.46, 0.48, 0.5), DARK)
-                m.box((x, Y(rd + 0.29), FLOOR_Z + 0.75), (0.46, 0.10, 0.95), DARK)
+        cabin_fit(m, d0, d1, DARK, METAL)
         for bd in (CAB_D0, CAB_D1):
             if d0 <= bd < d1:
                 _, hw_, zt_, zb_ = fus(bd); zcb = (zt_ + zb_) / 2
@@ -803,7 +1110,7 @@ def build():
                     def gp(dd, deg):
                         q = surf(dd, math.radians(deg)); q.x *= sx; return q
                     rings = [[gp(cd + (e[0] - cd) * f, ca + (e[1] - ca) * f) for e in edge] for f in (1.0, 0.75, 0.5, 0.25)]
-                    # stock canopy convention (0.3.11: tint inside): the outer pane faces out and is seen from outside;
+                    # stock canopy convention (0.3.11, tint inside): the outer pane faces out and is seen from outside;
                     # a second pane just inside the skin, on the cockpit layer with the stock interior glass shader, faces in
                     # 0.3.17 (review): the glass sat 12 mm proud of the skin with a visible lifted edge; it now sits 5 mm out,
                     # under a frame band that laps over its edge and slopes down onto the skin
@@ -836,7 +1143,7 @@ def build():
                 rings = [[Vector((x, Y(dd), skin_z(fus, x, dd) + 0.03)), Vector((x, Y(dd), NB_TOP))] for x in xs]
                 m.loft(rings, BAY, cap0=False, cap1=False, quads=lambda i: i == 0)
             m.loft([[Vector((-NB_X, Y(dd), NB_TOP)), Vector((NB_X, Y(dd), NB_TOP))] for dd in drange(NB_D0, NB_D1, 0.5)], BAY, cap0=False, cap1=False, quads=lambda i: i == 0)
-            # nose gear bay opening lip in skin colour (no grey border), hiding the stepped cut
+            # nose gear bay opening lip in skin colour (no grey border, per), hiding the stepped cut
             def fr(x, dd): return Vector((x, Y(dd), skin_z(fus, x, dd) - 0.012))
             for sx in (-1, 1):
                 m.loft([[fr(sx * (NB_X - 0.05), dd), fr(sx * (NB_X + 0.05), dd)] for dd in drange(NB_D0 - 0.05, NB_D1 + 0.05, 0.2)], SKIN, cap0=False, cap1=False, quads=lambda i: i == 0)
@@ -883,10 +1190,13 @@ def build():
                     rings.append([p + Vector((0, 0, 0.20 * k * math.cos(a_))) + q * (0.10 * k * math.sin(a_) - 0.02) for a_ in [math.pi * j / 8 for j in range(9)]])
                 m.loft(rings, SKIN, cap0=False, cap1=False)
         if name == 'fuselage':
-            before = set(m.bm.verts)
+            before = set(m.bm.verts); fbefore = set(m.bm.faces)
             m.loft([section(*fair(d), n=32, ex=FAIR_EX) for d in sorted(set(drange(FAIR[0][0], FAIR[-1][0], 0.7) + [GEAR_D + k for k in (-WELL_R, -SLOT_W, SLOT_W, WELL_R)]))],
                     SKIN, clip4=well_clip(lambda p: -1.0))
             bmesh.ops.remove_doubles(m.bm, verts=[v for v in m.bm.verts if v not in before], dist=0.0005)
+            gl = m.bm.faces.layers.int.get('grp')
+            for f in m.bm.faces:
+                if f not in fbefore: f[gl] = 2     # belly fairing skin: four panels of their own (0.4.0)
             # main gear bays: the A220 has no doors over the main wheels; the tyres sit in open wells in the belly
             # fairing, and the leg folds into a bay running out to the trunnion, closed by the door on the leg. Each bay
             # is a closed wall band round the opening plus a roof slab, so it reads from inside without back faces
@@ -914,12 +1224,12 @@ def build():
             # and hinge fairings along both door edges
             for dd in drange(BAY_D0 + 0.35, BAY_D1 - 0.35, 0.6):
                 for sx in (-1, 1):
-                    # slim frames, flush-ish with the wall (0.3.10: present but less significant)
+                    # slim frames, flush-ish with the wall (the author 0.3.10: present but less significant)
                     zl = skin_z(fus, BAY_X, dd); m.box((sx * (BAY_X - 0.015), Y(dd), (zl + BAY_TOP) / 2), (0.03, 0.035, BAY_TOP - zl), BAY)
                 m.box((0, Y(dd), BAY_TOP - 0.015), (2 * BAY_X, 0.035, 0.03), BAY)
             for sx in (-1, 1):
                 m.box((sx * 0.57, Y((BAY_D0 + BAY_D1) / 2), BAY_TOP - 0.10), (0.16, BAY_D1 - BAY_D0 - 0.3, 0.20), METAL)
-                # (0.3.14: the raised hinge fairing rods along the door edges are gone; the doors close flush)
+                # (0.3.14, the raised hinge fairing rods along the door edges are gone; the doors close flush)
         mid = (d0 + d1) / 2
         piv = Vector((0, Y(mid), 0)) if name != 'fuselage' else Vector((0, 0, 0))
         if name == 'cockpit_F': piv = Vector((0, Y(2.81), 0.33))   # puts the reused crew stations at the flight deck
@@ -932,9 +1242,14 @@ def build():
                     c = f.calc_center_median(); dd = NOSE_Y - c.y; zc = (fus(dd)[2] + fus(dd)[3]) / 2
                     radial = Vector((c.x, 0.0, c.z - zc))
                     if (f.normal.dot(radial) > 0) != out: f.normal_flip()
-            emit('canopy_glass', glass_x, piv, hull=False, recalc=False)
-            emit('canopy_glass_int', glass_i, piv, hull=False, recalc=False)
-            import json as _j; _j.dump(PANE_OUT, open('/tmp/dp/panes.json', 'w'))     # pane outlines on the skin, for the cockpit window reveals
+            # 0.4.0: each side's panes ride that side's upper cockpit piece, so they go with it when it is shot away
+            for gname, gm_ in (('canopy_glass', glass_x), ('canopy_glass_int', glass_i)):
+                for sfx, keep_ in (('_L', lambda x: x < 0), ('_R', lambda x: x >= 0)):
+                    sub = Mesh(); sub.mats = list(gm_.mats); sub.bm = gm_.bm.copy()
+                    bmesh.ops.delete(sub.bm, geom=[f for f in sub.bm.faces if not keep_(f.calc_center_median().x)], context='FACES')
+                    bmesh.ops.delete(sub.bm, geom=[v for v in sub.bm.verts if not v.link_faces], context='VERTS')
+                    emit(gname + sfx, sub, piv, hull=False, recalc=False)
+            import json as _j; _j.dump(PANE_OUT, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'panes.json'), 'w'))     # pane outlines on the skin, for the cockpit window reveals
 
     # forward doors: plug doors 0.16 m thick (outer skin, edge, inner trim panel) with a raised inner frame, two
     # stiffening ribs, a lever handle, the evacuation-slide pack across the bottom and a window reveal through the door.
@@ -967,6 +1282,20 @@ def build():
         m.loft([[skin_pt(sx, dd, z, o) for dd in ds] for z, o in ((DOOR_Z0 + 0.06, -DT), (DOOR_Z0 + 0.06, -DT - 0.20), (DOOR_Z0 + 0.42, -DT - 0.20), (DOOR_Z0 + 0.42, -DT))], DARK, cap0=True, cap1=True, quads=lambda i: i < len(ds) - 1)
         hp0 = skin_pt(sx, DOOR_D1 - 0.14, WZ - 0.05, -DT - 0.06); hp1 = skin_pt(sx, DOOR_D1 - 0.14, WZ + 0.22, -DT - 0.06)
         rod(m, hp0, hp1, 0.018, METAL, 6)
+        # 0.3.29 cabin side of the door (detail on the forward doors): lined trim panel between the ribs, an
+        # assist grip along the hinge edge, the slide arming lever and its placard, and a door warning placard
+        LIN = material('P220_lining', (0.77, 0.78, 0.79)); WHITE = material('P220_white', (0.92, 0.93, 0.92))
+        for za, zb in ((WZ + 0.36, DOOR_Z1 - 0.12), (DOOR_Z0 + 0.66, WZ - 0.42)):
+            ds = drange(DOOR_D0 + 0.12, DOOR_D1 - 0.12, 0.35)
+            m.loft([[skin_pt(sx, dd, z, -DT - 0.012) for dd in ds] for z in (za, zb)], LIN, cap0=False, cap1=False, quads=lambda i: i < len(ds) - 1)
+        rod(m, skin_pt(sx, DOOR_D0 + 0.12, WZ - 0.30, -DT - 0.07), skin_pt(sx, DOOR_D0 + 0.12, WZ + 0.30, -DT - 0.07), 0.016, METAL, 6)
+        for zz in (WZ - 0.30, WZ + 0.30):
+            rod(m, skin_pt(sx, DOOR_D0 + 0.12, zz, -DT - 0.012), skin_pt(sx, DOOR_D0 + 0.12, zz, -DT - 0.07), 0.012, METAL, 6)
+        lv = skin_pt(sx, dc + 0.18, DOOR_Z0 + 0.50, -DT - 0.20)
+        m.box(lv + Vector((0, 0, 0.03)), (0.05, 0.14, 0.06), DARK)
+        rod(m, lv + Vector((0, 0, 0.05)), lv + Vector((-sx * 0.02, 0.06, 0.16)), 0.012, METAL, 6)
+        m.box(skin_pt(sx, dc - 0.12, DOOR_Z0 + 0.50, -DT - 0.205), (0.01, 0.16, 0.08), WHITE)
+        m.box(skin_pt(sx, dc, WZ + 0.20, -DT - 0.015), (0.01, 0.20, 0.06), WHITE)
         # outer flush handle recess and the hinge arm fairing at the front edge
         m.box(skin_pt(sx, DOOR_D1 - 0.16, WZ - 0.30, 0.004), (0.02, 0.16, 0.05), DARK)
         hp = skin_pt(sx, DOOR_D0, zc)
@@ -991,7 +1320,7 @@ def build():
         m = Mesh(); m.loft(rings, SKIN)
         for dd in drange(BAY_D0 + 0.4, BAY_D1 - 0.4, 0.9):      # stiffening ribs on the inner face
             xs = [0.05 + (BAY_X - 0.12) * k / 6 for k in range(7)]
-            m.loft([[Vector((sx * x, Y(dd + o), skin_z(fus, x, dd) + 0.04 + zz)) for x in xs] for o, zz in ((-0.015, 0), (-0.015, 0.03), (0.015, 0.03), (0.015, 0))], BAY, cap0=False, cap1=False)   # slim (0.3.10)
+            m.loft([[Vector((sx * x, Y(dd + o), skin_z(fus, x, dd) + 0.04 + zz)) for x in xs] for o, zz in ((-0.015, 0), (-0.015, 0.03), (0.015, 0.03), (0.015, 0))], BAY, cap0=False, cap1=False)   # slim (the author 0.3.10)
         ha = Vector((sx * BAY_X, Y(BAY_D0), skin_z(fus, BAY_X, BAY_D0))); hb = Vector((sx * BAY_X, Y(BAY_D1), skin_z(fus, BAY_X, BAY_D1)))
         emit('baydoor_' + side, m, (ha + hb) / 2, hull=False)
         point('baydoor_' + side + '_hingeA', ha); point('baydoor_' + side + '_hingeB', hb)
@@ -1067,7 +1396,7 @@ def build():
             point(nm + '_' + side + '_hingeA', a); point(nm + '_' + side + '_hingeB', b)
         # pylon hardpoint midway between the two flap track fairings (wing2 underside, s 9.7)
         le, c, t, z = wing_at(9.7)
-        point('pylon_' + side + '1', Vector((sx * 9.7, Y(le + 0.35 * c), z - 0.06 * c)))
+        point('pylon_' + side + '1', Vector((sx * 9.7, Y(le + 0.35 * c), z - 0.036 * c)))   # 0.4.5: on the wing underside (was 7 cm below it)
         # engine: nacelle (engine_*), pylon strut (intake_*), exhaust plug (nozzle_R*)
         cx, cz = sx * 5.35, -2.25
         engine(sx, side, cx, cz, SKIN, DARK, METAL, BAY)
@@ -1078,10 +1407,10 @@ def build():
         point('thrust_' + side, Vector((cx, Y(17.9), cz)))
         # pylon: a streamlined strut from just behind the fan cowl to past the trailing edge, buried in the nacelle
         # below and the wing above, tapered at both ends like the real pylon
-        def nac_r(dd):
-            for (a0, r0), (a1, r1) in zip(prof, prof[1:]):
+        def nac_r(dd):     # 0.4.6: the nacelle profile (this read the flap-track fairing 'prof' and ran the strut down through the fan)
+            for (a0, r0), (a1, r1) in zip(NAC_OUT, NAC_OUT[1:]):
                 if a0 <= dd <= a1: return r0 + (r1 - r0) * (dd - a0) / (a1 - a0)
-            return prof[-1][1]
+            return NAC_OUT[-1][1]
         m = Mesh(); rings = []
         for dd in drange(13.3, 18.1, 0.3):
             k = (dd - 13.3) / 4.8
@@ -1100,6 +1429,7 @@ def build():
             le, c, t = lerp_tab(HT, s); return Vector((sx * s, Y(le + 0.7 * c), HZ + s * HDIH))
         a, b = hpt(0.95), hpt(6.16); emit('elevator_' + side, m, (a + b) / 2)
         point('elevator_' + side + '_hingeA', a); point('elevator_' + side + '_hingeB', b)
+        point('elevtip_' + side + '_hingeA', hpt(4.95)); point('elevtip_' + side + '_hingeB', b)     # 0.4.0 elevator tip piece
         # main gear (as on the A220: a single oleo leg pivoting fore and aft in the wing, folding 80 deg inboard so the
         # twin wheels lie almost flush in open wells in the belly fairing): strut with trunnion, side brace and leg
         # door (gear_*), oleo piston, torque links and axle (gear_*_unsprung), twin wheels (wheel_*). Track 6.7 m
@@ -1212,6 +1542,7 @@ def build():
                 r = fin_ring(z, 0.0, 0.7); cx = sum(p.x for p in r) / len(r); cy = sum(p.y for p in r) / len(r)
                 return [Vector((p.x - math.copysign(min(k, abs(p.x - cx)), p.x - cx), p.y, p.z)) for p in r]
             m.loft([inset_ring(z0 - 0.06), inset_ring(z0 + 0.002)], SKIN, cap0=False, cap1=False)
+        fin_fold_mech(nm, m, SKIN)
         zm = (z0 + z1) / 2; le, c, t = lerp_tab(FIN, zm); emit('vstab_' + nm, m, Vector((0, Y(le + 0.3 * c), zm)), hull_keep=lambda p, z0=z0: p.z >= z0 - 0.001)
         za, zb = max(z0, 1.6), z1
         m = Mesh(); m.loft([fin_ring(z, 0.7, 1.0) for z in drange(za, zb, 0.6)], SKIN)
@@ -1219,7 +1550,9 @@ def build():
             le, c, t = lerp_tab(FIN, z); return Vector((0, Y(le + 0.7 * c), z))
         a, b = fpt(za), fpt(zb); emit('rudder_' + nm, m, (a + b) / 2)
         point('rudder_' + nm + '_hingeA', a); point('rudder_' + nm + '_hingeB', b)
+        if nm == 'R': point('ruddertip_hingeA', fpt(6.35)); point('ruddertip_hingeB', b)                  # 0.4.0 rudder tip piece
 
+    fin_fold_actuators()
     # GlobalEye (Erieye) dorsal radar: the balanced beam ("ski") stands on two swept, streamlined pylons over the wing box
     # and slopes slightly down towards the front, as on the real aircraft. Built in mount space: pivot = dorsalMount on
     # the crown at d 17.2
@@ -1247,8 +1580,11 @@ def build():
 
     # crew, mounts, cameras, CoM
     rd = WIN_D0 + WIN_P / 2 - 0.05
-    for nm, x, d, z in (('RearSeater1', -0.65, rd, FLOOR_Z + 0.70), ('RearSeater2', 0.65, rd, FLOOR_Z + 0.70)):
-        point(nm, Vector((x, Y(d), z)))
+    # 0.3.30 (the two cabin crew sit at the new mission stations): seated in the front station seats, facing
+    # their consoles (outboard); the builder turns them to face the wall
+    for nm, sx in (('RearSeater1', -1), ('RearSeater2', 1)):
+        b = STATION_SEATS.get((7.05, sx), Vector((sx * 1.0, Y(7.05), FLOOR_Z)))
+        point(nm, b + Vector((sx * 0.05, 0, 0.43)))
     # tail laser: a targeting-pod style ball held in a scooped hood at the end of the tail cone. The roll stage (collar ring with
     # two arms carrying the tilt pivots) turns about the fuselage axis, the 0.60 m ball tilts on the pivots, and the
     # flat glass emitter window faces down at rest. Both meshes are built in aircraft axes at that rest pose
@@ -1296,9 +1632,12 @@ def build():
     point('contactSparks', Vector((0, Y(20.0), -2.4)))
 
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'p220_structure.py')).read())
+SPLIT_ON = not os.environ.get('NOSPLIT')
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'p220_split.py')).read())
 
 if __name__ == '__main__':
     build()
     out = sys.argv[sys.argv.index('--') + 1]
     bpy.ops.wm.save_as_mainfile(filepath=out)
+    write_pieces(os.path.join(os.path.dirname(out), 'P220_pieces.json'))
     print('parts', len(bpy.data.collections['MODEL'].objects), 'cols', len(bpy.data.collections['COLLISION'].objects), 'points', len(bpy.data.collections['POINTS'].objects))

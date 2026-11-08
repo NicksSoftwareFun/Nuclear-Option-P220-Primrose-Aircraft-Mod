@@ -22,6 +22,9 @@ public static class P220Builder
 
     [System.Serializable] class E { public string name, coll, kind; public float[] pos, rot, bmin, bmax; public string[] mats; }
     [System.Serializable] class W { public E[] items; }
+    [System.Serializable] class PieceE { public string name; public string of; public string[] touch; }
+    [System.Serializable] class PW { public PieceE[] items; }
+    static List<PieceE> PIECES = new List<PieceE>();
 
     static Dictionary<string, E> L;
     static Dictionary<string, Mesh> M;
@@ -157,6 +160,11 @@ public static class P220Builder
         else log.AppendLine("UNSUPPORTED " + path);
         so.ApplyModifiedPropertiesWithoutUndo();
     }
+    static Object Get(Object c, string path)
+    {
+        if (c == null) return null;
+        var p = Prop(new SerializedObject(c), path); return p != null ? p.objectReferenceValue : null;
+    }
     static void Size(Object c, string path, int n)
     {
         var so = new SerializedObject(c); var p = Prop(so, path); if (p == null) return;
@@ -193,7 +201,8 @@ public static class P220Builder
     // The textures come from art/scripts/liv (p220_paint.py, p220_dmg_alpha.py, p220_bake_ao.py) into Art/Skin.
     const string SKIN = ART + "Skin/";
     public const string LIVERY = ART + "P220_livery_plink.asset";
-    static Texture2D SkinTex(string name, bool srgb, bool normal, bool alpha)
+    static Texture2D SkinTex(string name, bool srgb, bool normal, bool alpha) { return SkinTex(name, srgb, normal, alpha, false); }
+    static Texture2D SkinTex(string name, bool srgb, bool normal, bool alpha, bool tile)
     {
         string path = SKIN + name + ".png";
         var ti = (TextureImporter)AssetImporter.GetAtPath(path);
@@ -203,9 +212,34 @@ public static class P220Builder
         ti.alphaSource = alpha ? TextureImporterAlphaSource.FromInput : TextureImporterAlphaSource.None;
         ti.alphaIsTransparency = false; ti.mipmapEnabled = true; ti.maxTextureSize = 2048;
         ti.textureCompression = TextureImporterCompression.CompressedHQ;
-        ti.wrapMode = TextureWrapMode.Clamp; ti.anisoLevel = 4;
+        ti.wrapMode = tile ? TextureWrapMode.Repeat : TextureWrapMode.Clamp; ti.anisoLevel = 4;
+        if (tile) ti.maxTextureSize = 1024;
         ti.SaveAndReimport();
         return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+    }
+    // 0.4.7 interior damage: the cargo bay / fuselage inner wall (P220_bay) and the cabin liner (P220_lining) use the
+    // same AircraftSkin shader with their own tiling maps (art/scripts/liv/p220_interior_tex.py, 2.5 m per tile), so they
+    // soot, scorch and tear as their part loses health. They are never the first material of a renderer, so the game's
+    // livery never reaches them; the plugin passes the part's health to them (P220Interior).
+    static Material InteriorMat(string kind)
+    {
+        string k = "P220_" + kind;
+        var b = SkinTex(k + "_b", true, false, false, true);
+        var n = SkinTex(k + "_n", false, true, false, true);
+        var m = SkinTex(k + "_m", false, false, true, true);
+        var ao = SkinTex(k + "_ao", false, false, false, true);
+        var db = SkinTex(k + "_dmg_b", true, false, true, true);
+        var dn = SkinTex(k + "_dmg_n", false, true, false, true);
+        var sh = AssetDatabase.LoadAssetAtPath<Shader>(PH + "Shader/Shader Graphs_AircraftSkin_PLACEHOLDER.shader");
+        string path = ART + k + ".mat";
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (mat == null) { mat = new Material(sh); AssetDatabase.CreateAsset(mat, path); }
+        mat.shader = sh; mat.shaderKeywords = new string[0]; mat.name = k;
+        mat.SetTexture("_Basecolor", b); mat.SetTexture("_Normal", n); mat.SetTexture("_Metallic", m); mat.SetTexture("_AO", ao);
+        mat.SetTexture("_BasecolorDmg", db); mat.SetTexture("_NormalDmg", dn); mat.SetTexture("_Livery", b);
+        mat.SetFloat("_HitPoints", 100f); mat.SetFloat("_Glossiness", 0f);
+        EditorUtility.SetDirty(mat);
+        return mat;
     }
     static Material SkinMat()
     {
@@ -238,6 +272,17 @@ public static class P220Builder
         so.FindProperty("Glossiness").floatValue = 0f;
         so.ApplyModifiedPropertiesWithoutUndo(); EditorUtility.SetDirty(liv);
         log.AppendLine("skin material + livery " + AssetDatabase.AssetPathToGUID(LIVERY));
+        // 0.4.13 (the author 2026-11-08): two more liveries, each only its own colour texture like the stock liveries
+        foreach (var k in new[] { "civil", "pala" })
+        {
+            var tb = SkinTex("P220_skin_" + k + "_b", true, false, false);
+            string lp = ART + "P220_livery_" + k + ".asset";
+            var l2 = AssetDatabase.LoadMainAssetAtPath(lp) as ScriptableObject;
+            if (l2 == null) { l2 = ScriptableObject.CreateInstance(liv.GetType()); AssetDatabase.CreateAsset(l2, lp); }
+            var s2 = new SerializedObject(l2);
+            s2.FindProperty("Texture").objectReferenceValue = tb; s2.FindProperty("Glossiness").floatValue = 0f;
+            s2.ApplyModifiedPropertiesWithoutUndo(); EditorUtility.SetDirty(l2);
+        }
         return mat;
     }
     static Material LitMat(string name, Color col, float smooth, float metal)
@@ -254,6 +299,26 @@ public static class P220Builder
             if (m.HasProperty(t)) m.SetTexture(t, null);
         m.SetColor("_BaseColor", col); if (m.HasProperty("_Color")) m.SetColor("_Color", col);
         m.SetFloat("_Smoothness", smooth); m.SetFloat("_Metallic", metal);
+        EditorUtility.SetDirty(m);
+        return m;
+    }
+    // 0.4.7 (textured grey plastic instead of flat grey): the moulded lining (consoles, knee bolster, walls, seat shells)
+    // gets a fine leather-grain plastic (art: /tmp/ck220/plastic_tex.py). The lining UVs are box-projected at 2.5 m per unit,
+    // so the tiling x5 makes one 0.5 m tile.
+    static Material PlasticMat()
+    {
+        var m = LitMat("P220_cabin", Color.white, 0.22f, 0f);
+        foreach (var n in new[] { "b", "n" })
+        {
+            var ti = (TextureImporter)AssetImporter.GetAtPath(ART + "P220_plastic_" + n + ".png");
+            if (ti == null) { log.AppendLine("no P220_plastic_" + n + ".png, lining stays flat grey"); m.SetColor("_BaseColor", new Color32(150, 154, 158, 255)); return m; }
+            ti.textureType = n == "n" ? TextureImporterType.NormalMap : TextureImporterType.Default; ti.sRGBTexture = n == "b";
+            ti.wrapMode = TextureWrapMode.Repeat; ti.maxTextureSize = 1024; ti.mipmapEnabled = true; ti.anisoLevel = 4; ti.SaveAndReimport();
+        }
+        var b = AssetDatabase.LoadAssetAtPath<Texture2D>(ART + "P220_plastic_b.png");
+        var nm = AssetDatabase.LoadAssetAtPath<Texture2D>(ART + "P220_plastic_n.png");
+        foreach (var t in new[] { "_BaseMap", "_MainTex" }) if (m.HasProperty(t)) { m.SetTexture(t, b); m.SetTextureScale(t, new Vector2(5f, 5f)); }
+        m.SetTexture("_BumpMap", nm); m.SetFloat("_BumpScale", 1f); m.EnableKeyword("_NORMALMAP");
         EditorUtility.SetDirty(m);
         return m;
     }
@@ -323,7 +388,7 @@ public static class P220Builder
         MAT["P220_metal"] = LitMat("P220_metal", new Color32(105, 108, 112, 255), 0.35f, 0.4f);
         MAT["P220_tyre"] = LitMat("P220_tyre", new Color32(16, 16, 16, 255), 0.15f, 0f);
         MAT["P220_window"] = LitMat("P220_window", new Color32(18, 21, 26, 255), 0.85f, 0f);
-        MAT["P220_bay"] = LitMat("P220_bay", new Color32(78, 80, 83, 255), 0.3f, 0.2f);
+        MAT["P220_bay"] = InteriorMat("bay");
         // internal structure (0.3.25): the game's own shared structure materials, as on every stock aircraft and the PB-22
         // (frames, spars, ribs and the engine cores: jet_mechanical; floor beams, centre box skins, bulkhead stiffeners: aircraft_structure)
         var jm = AssetDatabase.LoadAssetAtPath<Material>(PH + "Material/jet_mechanical_PLACEHOLDER.mat");
@@ -337,6 +402,37 @@ public static class P220Builder
         var gint = AssetDatabase.LoadAssetAtPath<Material>(PH + "Material/trainer_glass_int_PLACEHOLDER.mat");
         MAT["P220_glass_int"] = gint != null ? gint : MAT["P220_glass"];
         if (glass == null) log.AppendLine("trainer_glass_PLACEHOLDER not found, windshield is dark paint");
+        // 0.3.29: fan parts. White spinner tip and spiral; the blurred fan disc uses the stock ducted-fan blur material
+        MAT["P220_white"] = LitMat("P220_white", new Color32(232, 234, 232, 255), 0.75f, 0f);
+        // 0.3.29 crew cabin fit: light grey lining (bins, dado, lavatory, cabinet, desks) and blue-grey seat fabric
+        MAT["P220_lining"] = InteriorMat("lining");
+        MAT["P220_seat"] = LitMat("P220_seat", new Color32(44, 52, 66, 255), 0.15f, 0f);
+        var blur = AssetDatabase.LoadAssetAtPath<Material>(PH + "Material/UtilityHelo1_fan_blur_PLACEHOLDER.mat");
+        // 0.3.30 (wanted a better spinning fan): own blur disc texture (art/scripts/fanblur_tex.py) on a copy of
+        // the stock ducted-fan blur material, nearly opaque so the core and mounts no longer show through a running fan
+        MAT["P220_fanblur"] = MAT["P220_dark"];
+        if (blur != null)
+        {
+            string tp = ART + "P220_fanblur.png";
+            var ti = (TextureImporter)AssetImporter.GetAtPath(tp);
+            if (ti != null)
+            {
+                ti.textureType = TextureImporterType.Default; ti.sRGBTexture = true; ti.alphaSource = TextureImporterAlphaSource.FromInput;
+                ti.alphaIsTransparency = true; ti.mipmapEnabled = true; ti.wrapMode = TextureWrapMode.Clamp; ti.SaveAndReimport();
+                var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(tp);
+                string mp = ART + "P220_fanblur.mat";
+                var mb = AssetDatabase.LoadAssetAtPath<Material>(mp);
+                if (mb == null) { mb = new Material(blur); mb.name = "P220_fanblur"; AssetDatabase.CreateAsset(mb, mp); }
+                else mb.CopyPropertiesFromMaterial(blur);
+                foreach (var t in new[] { "_BaseMap", "_MainTex" }) if (mb.HasProperty(t)) mb.SetTexture(t, tex);
+                if (mb.HasProperty("_BaseColor")) mb.SetColor("_BaseColor", Color.white);
+                if (mb.HasProperty("_Color")) mb.SetColor("_Color", Color.white);
+                EditorUtility.SetDirty(mb);
+                MAT["P220_fanblur"] = mb;
+            }
+            else { log.AppendLine("no fan blur texture, stock blur used"); MAT["P220_fanblur"] = blur; }
+        }
+        if (blur == null) log.AppendLine("fan blur placeholder material missing");
         try { Mounts(); } catch (System.Exception ex) { log.AppendLine("MOUNTS ERROR " + ex); }
 
         root = PrefabUtility.LoadPrefabContents(SRC).transform;
@@ -347,6 +443,7 @@ public static class P220Builder
             MovingPanels();
             Engines();
             Tail();
+            Pieces();
             MainGear("L", -1f); MainGear("R", 1f);
             NoseGear();
             Misc();
@@ -355,6 +452,7 @@ public static class P220Builder
             AeroAndDamage();
             Rename();
             CockpitP220();
+            SkinRegister();
             root.name = "P220Primrose";
             PrefabUtility.SaveAsPrefabAsset(root.gameObject, DST);
             log.AppendLine("saved " + DST);
@@ -401,13 +499,17 @@ public static class P220Builder
         var rl = root.Find("fuselage_lod1"); if (rl != null) rl.GetComponent<MeshFilter>().sharedMesh = M["fuselage_colmesh"];
         PartAt("fuselage_F"); PartAt("cockpit_R"); PartAt("cockpit_F"); PartAt("nose");
         // flight deck glazing, the stock canopy way: outer pane seen from outside, inner pane on the cockpit layer with the
-        // stock interior glass shader seen from the seats (0.3.11: the view out was tinted)
+        // stock interior glass shader seen from the seats (0.3.11, the view out was tinted)
         {
             var cf = Need("cockpit_F");
-            var gx = Find(cf, "canopy_glass") ?? New("canopy_glass", cf); gx.position = P("canopy_glass"); gx.rotation = Quaternion.identity; SetMesh(gx, "canopy_glass");
-            var gi = Find(cf, "canopy_glass_int") ?? New("canopy_glass_int", cf); gi.position = P("canopy_glass_int"); gi.rotation = Quaternion.identity; SetMesh(gi, "canopy_glass_int");
-            int cl = LayerMask.NameToLayer("Cockpit"); if (cl >= 0) gi.gameObject.layer = cl; else log.AppendLine("no Cockpit layer");
-            log.AppendLine("canopy glass: outer layer " + LayerMask.LayerToName(gx.gameObject.layer) + ", inner layer " + LayerMask.LayerToName(gi.gameObject.layer));
+            // 0.4.0: one outer and one inner glass object per side; Pieces() moves each side onto its upper cockpit piece
+            int cl = LayerMask.NameToLayer("Cockpit"); if (cl < 0) log.AppendLine("no Cockpit layer");
+            foreach (var sd in new[] { "_L", "_R" })
+            {
+                var gx = Find(cf, "canopy_glass" + sd) ?? New("canopy_glass" + sd, cf); gx.position = P("canopy_glass" + sd); gx.rotation = Quaternion.identity; SetMesh(gx, "canopy_glass" + sd);
+                var gi = Find(cf, "canopy_glass_int" + sd) ?? New("canopy_glass_int" + sd, cf); gi.position = P("canopy_glass_int" + sd); gi.rotation = Quaternion.identity; SetMesh(gi, "canopy_glass_int" + sd);
+                if (cl >= 0) gi.gameObject.layer = cl;
+            }
         }
         // the Medusa crew stations ride cockpit_F, whose pivot puts them on the P220 flight deck; its bubble canopy is
         // hidden (its Canopy components stay for the hangar open/close logic). The Medusa crew doors become the forward
@@ -426,10 +528,25 @@ public static class P220Builder
         foreach (var c in root.GetComponentsInChildren<Component>(true).Where(c => c != null && c.GetType().Name == "Pilot")) Set(c, "ejectionSeat", false);
         foreach (var n in new[] { "RearSeater1", "RearSeater2" })
         {
-            var t = Need(n); t.position = P(n); t.rotation = Quaternion.identity;
-            // 0.3.27 triangle budget: the two cabin crew stay in the crew list (bail-out, crew count) but are not drawn
-            foreach (var r in t.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
+            // 0.3.30: the two cabin crew sit at the front mission stations, facing their consoles on the wall;
+            // drawn again, but their Medusa ejection seats stay hidden
+            var t = Need(n); t.position = P(n); t.rotation = Quaternion.Euler(0f, n == "RearSeater1" ? -90f : 90f, 0f);
+            foreach (var r in t.GetComponentsInChildren<Renderer>(true)) r.enabled = !(r.transform.name == "EjectionSeat" || r.transform.parent != null && r.transform.parent.name == "EjectionSeat");
+            // 0.4.5 (two ejection seats still showed in the cabin): the game turns crew renderers back on, so the seat mesh goes
+            foreach (var es in t.GetComponentsInChildren<Transform>(true).Where(x => x.name == "EjectionSeat").ToList()) foreach (var x in es.GetComponentsInChildren<Transform>(true)) NoMesh(x);
         }
+        // 0.3.29 (the ejection seats clipped the centre console; no ejection seats on this aircraft): the Medusa
+        // seat meshes are hidden and the pilots sit in the airliner seats modelled into the cockpit interior
+        int seatsHidden = 0;
+        foreach (var es in root.GetComponentsInChildren<Transform>(true).Where(t => t.name == "EjectionSeat" && t.parent != null && (t.parent.name == "pilot" || t.parent.name == "copilot" || t.parent.name == "WSO")).ToList())
+        {
+            foreach (var r in es.GetComponentsInChildren<Renderer>(true)) r.enabled = false;
+            seatsHidden++;
+        }
+        log.AppendLine("ejection seats hidden: " + seatsHidden);
+        // 0.3.30 (the Medusa's rear crew seats and computers showed through the forward doors): its rear crew
+        // interior mesh goes; the P220 cabin fit in the fuselage parts replaces it
+        { var ri = Find(root, "cockpit_R_int"); if (ri != null) { NoMesh(ri); log.AppendLine("Medusa rear crew interior removed"); } else log.AppendLine("no cockpit_R_int"); }
         foreach (var n in new[] { "targetCamForward", "targetCamRear", "landingCamPoint" }) Need(n).position = P(n);
         var fR = PartAt("fuselage_R");
         foreach (var s in new[] { "L", "R" })
@@ -481,7 +598,7 @@ public static class P220Builder
         EditorUtility.SetDirty(ckMat);
         var mats = new Dictionary<string, Material>
         {
-            { "P220_cockpit", ckMat }, { "P220_cabin", LitMat("P220_cabin", new Color32(150, 154, 158, 255), 0.25f, 0f) },
+            { "P220_cockpit", ckMat }, { "P220_cabin", PlasticMat() },
             { "tacScreenDisplay", AssetDatabase.LoadAssetAtPath<Material>(PH + "Material/tacScreenDisplay_PLACEHOLDER.mat") },
             { "CockpitWarningLight", AssetDatabase.LoadAssetAtPath<Material>(PH + "Material/CockpitWarningLight_PLACEHOLDER.mat") },
             { "Matte_black", AssetDatabase.LoadAssetAtPath<Material>(PH + "Material/Matte_black_PLACEHOLDER.mat") },
@@ -532,6 +649,20 @@ public static class P220Builder
         var cockpit = C(ck, "Cockpit");
         Set(cockpit, "tacScreenRender", tac.GetComponent<Renderer>());
         { var page = TacScreenP220(); if (page != null) Set(cockpit, "tacScreenUIPrefab", page); }
+        // 0.4.2: the page draws into P220_tacScreenRT since 0.3.30, but the stock display material shows the stock target, so the
+        // screens stayed blank. The screen gets its own copy of the stock material (black, emission x2) reading our target.
+        {
+            string tm = ART + "P220_tacScreenDisplay.mat";
+            AssetDatabase.DeleteAsset(tm);
+            AssetDatabase.CopyAsset(PH + "Material/tacScreenDisplay_PLACEHOLDER.mat", tm);
+            var dm = AssetDatabase.LoadAssetAtPath<Material>(tm); dm.name = "P220_tacScreenDisplay";
+            var trt = AssetDatabase.LoadAssetAtPath<RenderTexture>(ART + "P220_tacScreenRT.renderTexture");
+            if (trt != null) dm.SetTexture("_EmissionMap", trt); else log.AppendLine("tac screen: no P220_tacScreenRT");
+            EditorUtility.SetDirty(dm);
+            var tr = tac.GetComponent<MeshRenderer>();
+            tr.sharedMaterials = tr.sharedMaterials.Select(x => x != null && x.name.StartsWith("tacScreenDisplay") ? dm : x).ToArray();
+            log.AppendLine("tac screen material: " + string.Join(",", tr.sharedMaterials.Select(x => x ? x.name : "null")));
+        }
         { var so = new SerializedObject(cockpit); so.FindProperty("joysticks").arraySize = 0;
           var th = so.FindProperty("throttles"); th.arraySize = 1; var e = th.GetArrayElementAtIndex(0);
           e.FindPropertyRelative("rotation").boolValue = false; e.FindPropertyRelative("motion").boolValue = true;
@@ -564,6 +695,8 @@ public static class P220Builder
             var pv = new Vector3(x, -0.074f, 17.16f);
             inside.Add(Part("pedal_" + n, cf, pv).GetComponent<Renderer>());
         }
+        // 0.4.11: gear lever is its own part; the plugin slides it between the DN and UP detents with the gear state
+        inside.Add(Part("gearLever", cf, new Vector3(0.71736f, 0.45538f, 17.32177f)).GetComponent<Renderer>());
         var ac = C(root, "Aircraft");
         { var so = new SerializedObject(ac); var cr = so.FindProperty("cockpitRenderers");
           var keep = new List<Object>(); for (int i = 0; i < cr.arraySize; i++) { var o = cr.GetArrayElementAtIndex(i).objectReferenceValue; if (o != null && !inside.Contains(o)) keep.Add(o); }
@@ -583,6 +716,25 @@ public static class P220Builder
     static readonly string[] CRIT = { "FIRE 1", "FIRE 2", "MISSILE", "GEAR", "STALL", "FUEL", "HYD", "ELEC" };
     static readonly string[] LAMPS = { "GEAR DN", "FLAP", "SPD BRK", "REV", "BRAKE", "AP", "A/THR", "NAV",
                                        "RADAR", "JAMMER", "LASER", "BAY", "ENG 1", "ENG 2", "APU", "ANTI ICE" };
+    // 0.3.29: own copy of the stock HUD extras (as the PB-22 does) so the overspeed warning sits at Mach 0.9
+    // (0.9 x 340 m/s at sea level = 306 m/s; the stock gauge takes one fixed airspeed per aircraft)
+    static GameObject HudExtras()
+    {
+        if (!AssetDatabase.IsValidFolder(MOD + "UI")) AssetDatabase.CreateFolder(MOD.TrimEnd('/'), "UI");
+        string dst = MOD + "UI/P220_HUDExtras.prefab";
+        AssetDatabase.DeleteAsset(dst);
+        if (!AssetDatabase.CopyAsset(PH + "GameObject/SFB_HUDExtras_PLACEHOLDER.prefab", dst)) { log.AppendLine("HUD extras: copy failed"); return AssetDatabase.LoadAssetAtPath<GameObject>(PH + "GameObject/SFB_HUDExtras_PLACEHOLDER.prefab"); }
+        var go = PrefabUtility.LoadPrefabContents(dst);
+        try
+        {
+            var sg = go.GetComponentsInChildren<Component>(true).FirstOrDefault(c => c != null && c.GetType().Name == "SpeedGauge");
+            if (sg == null) log.AppendLine("HUD extras: no SpeedGauge");
+            else { var sso = new SerializedObject(sg); sso.FindProperty("overspeedThreshold").floatValue = 306f; sso.ApplyModifiedPropertiesWithoutUndo(); }
+            PrefabUtility.SaveAsPrefabAsset(go, dst);
+        }
+        finally { PrefabUtility.UnloadPrefabContents(go); }
+        return AssetDatabase.LoadAssetAtPath<GameObject>(dst);
+    }
     static GameObject TacScreenP220()
     {
         string dst = ART + "P220_tacScreen.prefab";
@@ -595,6 +747,27 @@ public static class P220Builder
             page.name = "P220_tacScreen";
             System.Func<string, RectTransform> R = n => page.GetComponentsInChildren<RectTransform>(true).First(t => t.name == n);
             var canvas = R("Canvas"); int layer = canvas.gameObject.layer;
+            // 0.3.30 (the screen text was too low resolution): the page renders into its own 2048 x 1024 target
+            // instead of the stock 1024 x 512 one, and the canvas draws at 2x so the layout keeps its 1024 x 512 units
+            {
+                var tsc = page.GetComponent(GameType("TacScreen"));
+                var stockRt = (RenderTexture)Get(tsc, "renderTexture");
+                string rtp = ART + "P220_tacScreenRT.renderTexture";
+                var rt = AssetDatabase.LoadAssetAtPath<RenderTexture>(rtp);
+                if (rt == null)
+                {
+                    rt = new RenderTexture(stockRt != null ? stockRt.descriptor : new RenderTextureDescriptor(2048, 1024, RenderTextureFormat.ARGB32, 24));
+                    rt.width = 2048; rt.height = 1024; rt.name = "P220_tacScreenRT";
+                    AssetDatabase.CreateAsset(rt, rtp);
+                }
+                rt.width = 2048; rt.height = 1024;
+                if (stockRt != null) { rt.antiAliasing = stockRt.antiAliasing; rt.filterMode = FilterMode.Trilinear; rt.useMipMap = stockRt.useMipMap; rt.autoGenerateMips = stockRt.autoGenerateMips; rt.anisoLevel = 4; }
+                EditorUtility.SetDirty(rt);
+                Set(tsc, "renderTexture", rt);
+                var cam = (Camera)Get(tsc, "cam"); if (cam != null) cam.targetTexture = rt;
+                var scaler = canvas.GetComponent<UnityEngine.UI.CanvasScaler>(); if (scaler != null) scaler.scaleFactor = 2f;
+                log.AppendLine("tac screen render target 2048 x 1024 (stock " + (stockRt != null ? stockRt.width + " x " + stockRt.height : "none") + ")");
+            }
             var font = Object.Instantiate(sfb.GetComponentsInChildren<RectTransform>(true).First(t => t.name == "Title Mass").gameObject, page.transform, false);
             font.SetActive(false);
             System.Func<float, float, float, float, Vector2> Rgn = (x, y, w, h) => new Vector2(x + w/2f - 512f, 256f - y - h/2f);
@@ -692,7 +865,9 @@ public static class P220Builder
                 var cell = Node("crit_" + n, annun, new Vector2(-256f + 32f + k*64f, 0f), new Vector2(60f, 41f));
                 Img("off", cell, Vector2.zero, new Vector2(60f, 41f), off);
                 var f = Img("lit", cell, Vector2.zero, new Vector2(60f, 41f), redCell ? red : amber); f.enabled = false; lit["crit_" + n] = f;
-                Txt("legend", cell, Vector2.zero, new Vector2(58f, 36f), n, 13f, legend);
+                var lg = Txt("legend", cell, Vector2.zero, new Vector2(58f, 36f), n, 13f, legend);
+                // 0.3.29: the glareshield strip shows this 512 x 45 region about 9% wider than it is: narrow the lettering to match
+                ((Component)lg).transform.localScale = new Vector3(0.92f, 1f, 1f);
             }
             annun.SetAsLastSibling();
             var lamps = Node("P220Lamps", canvas, Rgn(512, 262, 512, 112), new Vector2(512f, 112f));
@@ -708,6 +883,9 @@ public static class P220Builder
                 else { var col = n == "GEAR DN" ? green : (n == "BRAKE" || n == "SPD BRK" || n == "REV" || n == "FLAP" ? amber : green);
                        var f = Img("lit", cell, Vector2.zero, new Vector2(62f, 26f), col); f.enabled = false; lit["lamp_" + n] = f; }
                 txt[n] = Txt("legend", cell, Vector2.zero, new Vector2(60f, 22f), n, 11f, legend);
+                // 0.3.29: each 62 x 26 px cell is shown on a lamp face about 1.33:1, so the lettering came out tall and narrow.
+                // Squash it here by the same ratio (0.56), split between width and height so it still fills the cell.
+                { var lt = (RectTransform)((Component)txt[n]).transform; lt.localScale = new Vector3(1.15f, 0.64f, 1f); lt.sizeDelta = new Vector2(52f, 34f); }
                 if (barCells.Contains(n) && n != "ENG 1" && n != "ENG 2")
                 {   // SystemStatusDisplay writes its own text here ("MODE : NAV" and so on)
                     var tm = txt[n]; var ty = tm.GetType();
@@ -829,7 +1007,10 @@ public static class P220Builder
     {
         var t = Need(part);
         var mid = (a + b) * 0.5f;
-        t.position = mid; t.rotation = Quaternion.identity;
+        // 0.4.11: the part and its visible mesh sit at the mesh origin (= hinge midpoint on whole surfaces, but the
+        // tip pieces are centred on their own bounds, so placing them on the hinge midpoint shifted them ~25 cm)
+        var org = P(mesh);
+        t.position = org; t.rotation = Quaternion.identity;
         NoMesh(t); SetCol(t, mesh + "_colmesh");
         var h = Find(root, hingeName);
         if (h == null) h = New(hingeName, t);
@@ -838,7 +1019,7 @@ public static class P220Builder
         h.position = mid; h.rotation = Quaternion.FromToRotation(Vector3.right, dir);
         var v = Find(h, visName);
         if (v == null) v = New(visName, h);
-        v.position = mid; v.rotation = Quaternion.identity;
+        v.position = org; v.rotation = Quaternion.identity;
         SetMesh(v, mesh);
         var lod = Find(v, part + "_lod1") ?? Find(t, part + "_lod1");
         if (lod != null) { lod.SetParent(v, false); lod.localPosition = Vector3.zero; lod.localRotation = Quaternion.identity; lod.GetComponent<MeshFilter>().sharedMesh = M[mesh + "_colmesh"]; }
@@ -980,6 +1161,15 @@ public static class P220Builder
             ObjArray(tj, "nozzles", C(nz, "JetNozzle"));
             Set(C(nz, "JetNozzle"), "part", C(en, "AeroPart"));
             Reversers(s, en);
+            // 0.3.29: fan blades, blur disc and spinner on one pivot on the engine axis; the plugin spins them from the
+            // engine RPM and swaps blades for the blur disc at speed (the stock DuctedFan's slow/fast mesh convention)
+            foreach (var fp in new[] { "fan_", "fanblur_", "spinner_" })
+            {
+                var ft = New("P220_" + fp.TrimEnd('_'), en); ft.position = P("fanAxis_" + s); ft.rotation = Quaternion.identity;
+                var fm = New("P220_" + fp.TrimEnd('_') + "_mesh", ft); fm.localPosition = Vector3.zero; fm.localRotation = Quaternion.identity;
+                SetMesh(fm, fp + s);
+                if (fp == "fanblur_") fm.gameObject.SetActive(false);
+            }
             // fire warnings name the engines by number, as the cockpit does
             Set(tj, "failureMessage", s == "L" ? "ENGINE 1 FIRE" : "ENGINE 2 FIRE");
             var clip = AssetDatabase.LoadMainAssetAtPath(Placeholder(s == "L" ? "engine1Fire" : "engine2Fire", "AudioClip"));
@@ -1078,6 +1268,17 @@ public static class P220Builder
         var vR = Need("vstab_R"); vR.SetParent(vL, true); PartAt("vstab_R");
         // each rudder half rides its fin half, so the upper rudder folds with the upper fin in the hangar
         Need("rudder_L").SetParent(vL, true); Need("rudder_R").SetParent(vR, true);
+        // 0.3.29: fin fold actuators, cylinder on the lower fin and rod on the upper fin, aimed at each other all the time,
+        // so they extend as the plugin folds the upper fin (the same aimed-pair setup as the reverser actuators)
+        // 0.4.5: the fold hinge line, read by the plugin (the crank horns now hang below the upper fin's root)
+        { var fh = Find(vL, "finFoldHinge") ?? New("finFoldHinge", vL); fh.position = P("fin_hinge"); fh.rotation = Quaternion.identity; }
+        for (int k = 1; k <= 2; k++)
+        {
+            var anc = P("fincyl_" + k); var lug = P("finrod_" + k);
+            var cyl = AimedMesh("finFoldActuator_" + k, vL, anc, lug, Vector3.forward, "fincyl_" + k);
+            var rodT = AimedMesh("finFoldRod_" + k, vR, lug, anc, Vector3.forward, "finrod_" + k);
+            foreach (var a in new[] { Aim(cyl, rodT, vL, Vector3.forward), Aim(rodT, cyl, vL, Vector3.forward) }) ((Behaviour)a).enabled = true;
+        }
         foreach (var s in new[] { "L", "R" })
         {
             var vs = Need("vstab_" + s);
@@ -1091,6 +1292,103 @@ public static class P220Builder
             Set(C(Need("rudder_" + s), "AeroPart"), "liftNormal", rln);
             Set(C(vs, "AeroPart"), "liftNormal", ln);
         }
+    }
+
+    // ------------------------------------------------------------------ 0.4.0 damage pieces (the author 2026-11-02)
+    // The fuselage sections (bottom + upper left + upper right; the tail cone in four), the belly fairing (four panels),
+    // the cockpit and nose (thirds) and the fin, rudder, stabiliser and elevator tips are parts of their own, cut along
+    // notched stock-style seams in p220_split.py. Each piece is an AeroPart under the part it was cut from (the
+    // backbone), jointed to everything its hull touches (P220_pieces.json, from hull_touch.py), so a chunk can be shot
+    // away without the airframe parting. The tip control surfaces are copies of their surface with the outer mesh.
+    static Transform PieceParent(PieceE p)
+    {
+        if (p.name.StartsWith("elevtip_")) return Need("hstabtip_" + p.name.Substring(8));
+        if (p.name == "ruddertip") return Need("fintip");
+        return p.of == "fuselage" ? root : Need(p.of);
+    }
+    static void Pieces()
+    {
+        string path = ART + "P220_pieces.json";
+        if (!System.IO.File.Exists(path)) { log.AppendLine("no damage pieces file"); return; }
+        PIECES = JsonUtility.FromJson<PW>("{\"items\":" + System.IO.File.ReadAllText(path) + "}").items.ToList();
+        var lg = root.GetComponent<LODGroup>(); var lods = lg.GetLODs();
+        var l0 = lods[0].renderers.ToList(); var l1 = lods.Length > 1 ? lods[1].renderers.ToList() : null;
+        var apType = C(root, "AeroPart").GetType();
+        var lodMats = root.Find("fuselage_lod1").GetComponent<MeshRenderer>().sharedMaterials;
+        foreach (var p in PIECES)
+        {
+            var parent = PieceParent(p);
+            if (p.name.StartsWith("elevtip_") || p.name == "ruddertip")
+            {
+                // a copy of the whole control surface (AeroPart, ControlSurface, hinge, visible mesh, LOD), cut down to the tip
+                var src = Need(p.of);
+                var go = Object.Instantiate(src.gameObject, parent, true); go.name = p.name;
+                foreach (var tr in go.GetComponentsInChildren<Transform>(true)) if (tr != go.transform) tr.name = tr.name.Replace(p.of, p.name);
+                var a = P(p.name + "_hingeA"); var b = P(p.name + "_hingeB");
+                Surface(p.name, p.name + "_hinge", p.name + "_visible", p.name, a, b, null);
+                if (p.name == "ruddertip")
+                {
+                    Need("ruddertip_hinge").rotation = Quaternion.FromToRotation(Vector3.right, (b - a).normalized);
+                    var vis = Need("ruddertip_visible"); vis.rotation = Quaternion.identity;
+                    var rln = Find(go.transform, "ruddertip_liftNormal") ?? New("ruddertip_liftNormal", go.transform);
+                    rln.position = vis.position; rln.rotation = Quaternion.Euler(0f, 0f, 90f);
+                    Set(C(go.transform, "AeroPart"), "liftNormal", rln);
+                }
+                else Set(C(go.transform, "AeroPart"), "liftNormal", Need(p.name + "_hinge"));
+                var r0 = Need(p.name + "_visible").GetComponent<Renderer>(); if (r0 != null) l0.Add(r0);
+                var lr = Find(go.transform, p.name + "_lod1"); if (lr != null && l1 != null) l1.Add(lr.GetComponent<Renderer>());
+                continue;
+            }
+            var t = Find(root, p.name) ?? New(p.name, parent);
+            t.SetParent(parent, true);
+            var tmpl = C(p.of == "fuselage" ? Need("fuselage_F") : Need(p.of), "AeroPart");
+            var ap = t.GetComponent(apType) ?? t.gameObject.AddComponent(apType);
+            EditorUtility.CopySerialized(tmpl, ap);
+            var so = new SerializedObject(ap);
+            so.FindProperty("joints").arraySize = 0;
+            so.FindProperty("damageMaterial.renderers").arraySize = 0;
+            so.FindProperty("disintegrateObjects").arraySize = 0;
+            so.FindProperty("criticalPart").boolValue = false;
+            so.FindProperty("centerOfMass").objectReferenceValue = null;
+            so.FindProperty("connectedAnchor").objectReferenceValue = null;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            var lod = Find(t, p.name + "_lod1");
+            if (lod == null) { lod = New(p.name + "_lod1", t); lod.gameObject.AddComponent<MeshFilter>(); lod.gameObject.AddComponent<MeshRenderer>().sharedMaterials = lodMats; }
+            PartAt(p.name);
+            // lift direction: tips lift like the surface they came from; fuselage pieces carry no lift
+            var tl = Get(tmpl, "liftNormal") as Transform;
+            var ln = Find(t, p.name + "_liftNormal") ?? New(p.name + "_liftNormal", t);
+            ln.position = t.position; ln.rotation = tl != null ? tl.rotation : Quaternion.identity;
+            Set(ap, "liftNormal", ln);
+            // 0.4.2: shells collide as thin hulls along their arc (<piece>_seg<k>_colmesh); the whole-piece hull stays the LOD mesh
+            {
+                var segs = M.Keys.Where(k => k.StartsWith(p.name + "_seg") && k.EndsWith("_colmesh")).OrderBy(k => k.Length).ThenBy(k => k).ToList();
+                if (segs.Count > 0)
+                {
+                    t.GetComponent<MeshCollider>().sharedMesh = M[segs[0]];
+                    for (int k = 1; k < segs.Count; k++)
+                    {
+                        var c = Find(t, p.name + "_col" + k) ?? New(p.name + "_col" + k, t);
+                        c.localPosition = Vector3.zero; c.localRotation = Quaternion.identity; c.localScale = Vector3.one;
+                        var mc = c.GetComponent<MeshCollider>(); if (mc == null) mc = c.gameObject.AddComponent<MeshCollider>();
+                        mc.convex = true; mc.sharedMesh = M[segs[k]];
+                    }
+                }
+            }
+            // 0.4.2: on the aircraft layer like the part it came from (new objects start on Default)
+            foreach (var c in t.GetComponentsInChildren<Transform>(true)) if (!c.name.EndsWith("_lod1")) c.gameObject.layer = tmpl.gameObject.layer;
+            l0.Add(t.GetComponent<Renderer>()); if (l1 != null) l1.Add(lod.GetComponent<Renderer>());
+        }
+        lods[0].renderers = l0.ToArray(); if (l1 != null) lods[1].renderers = l1.ToArray(); lg.SetLODs(lods);
+        // things fitted to a piece ride it: the forward doors, each side's windscreen glass, the dorsal radar mount
+        foreach (var s in new[] { "L", "R" })
+        {
+            Need("doorMount_" + s).SetParent(Need("cockpit_R_sk" + s), true);
+            Need("canopy_glass_" + s).SetParent(Need("cockpit_F_sk" + s), true);
+            Need("canopy_glass_int_" + s).SetParent(Need("cockpit_F_sk" + s), true);
+        }
+        Need("dorsalMount").SetParent(Need("fuselage_skR"), true);
+        log.AppendLine("damage pieces: " + PIECES.Count + " (" + root.GetComponentsInChildren(apType, true).Length + " parts)");
     }
 
     // ------------------------------------------------------------------ gear
@@ -1239,9 +1537,10 @@ public static class P220Builder
     }
 
     // ------------------------------------------------------------------ hardpoints
+    // 0.3.29: no AGM-68 or Kingpin rocket pods on the wings
     static readonly string[] WingOptions = { "AAM1_single", "AAM1_double", "AAM2_single", "AAM2_double",
-        "AGM_heavy_single", "AGM_heavy_double", "ARM1_single", "ARM2_single", "AShM2_single",
-        "AShM2_double", "AIR-2_Genie_single", "Rocket2_4Pod", "SpecialSmokePod", "JammingPod1" };   // jamming pod, not the ECM pod (that one is for aircraft without an internal jammer)
+        "ARM1_single", "ARM2_single", "AShM2_single",
+        "AShM2_double", "AIR-2_Genie_single", "SpecialSmokePod", "JammingPod1" };   // jamming pod, not the ECM pod (that one is for aircraft without an internal jammer)
     static void HardpointSet(SerializedProperty set, string name, Object[] options, params object[] hp)
     {
         set.FindPropertyRelative("name").stringValue = name;
@@ -1277,7 +1576,7 @@ public static class P220Builder
         var wing = new List<Object> { null };
         foreach (var n in WingOptions) { try { wing.Add(Mount(n)); } catch (System.Exception ex) { log.AppendLine("wing option skipped: " + ex.Message); } }
         // weapon cycling follows set order: the tail laser goes last
-        HardpointSet(sets.GetArrayElementAtIndex(0), "Dorsal Radar", new Object[] { null, Mount("P220_GlobalEye") }, Need("dorsalMount"), C(root, "AeroPart"));
+        HardpointSet(sets.GetArrayElementAtIndex(0), "Dorsal Radar", new Object[] { null, Mount("P220_GlobalEye") }, Need("dorsalMount"), AP("fuselage_skR"));   // 0.4.0: rides the upper right centre piece
         HardpointSet(sets.GetArrayElementAtIndex(1), "Wing Pylons", wing.ToArray(), Need("pylon_L1"), AP("wing2_L"), Need("pylon_R1"), AP("wing2_R"));
         HardpointSet(sets.GetArrayElementAtIndex(2), "Bay Left", bayOpts.ToArray(), Need("weaponBayHardpoint"), AP("fuselage_R"));
         HardpointSet(sets.GetArrayElementAtIndex(3), "Bay Right", bayOpts.ToArray(), Need("weaponBayHardpoint_R"), AP("fuselage_R"));
@@ -1326,15 +1625,30 @@ public static class P220Builder
         // thrust to a Darkreach-like 0.55 thrust/weight
         // plus 7.5 t of mission systems and survivability equipment (40% of the real 18.7 t max payload), spread
         // through the cabin sections: centre +2,000, forward +2,000, rear +2,000, front cabin +1,500
-        Part("", 8000f, 0f, 0.55f, 5000f);
-        Part("fuselage_F", 5000f, 0f, 0.15f, 0f);
-        Part("cockpit_R", 5000f, 0f, 0.2f, -1f);
-        Part("cockpit_F", 1800f, 0f, 0.15f, -1f);
-        Part("nose", 300f, 0f, 0.1f, -1f);
-        Part("fuselage_R", 5500f, 0f, 0.2f, 0f);
-        Part("tail", 1500f, 0f, 0.15f, -1f);
-        Part("vstab_L", 500f, 10f, 0.03f, -1f); Part("vstab_R", 300f, 6f, 0.02f, -1f);
-        Part("rudder_L", 120f, 3.6f, 0f, -1f); Part("rudder_R", 100f, 3f, 0f, -1f);
+        // 0.4.0 damage pieces: each section's mass is shared out with the pieces cut from it (the totals are unchanged)
+        Part("", 5600f, 0f, 0.55f, 5000f);
+        Part("fuselage_skL", 600f, 0f, 0f, -1f); Part("fuselage_skR", 600f, 0f, 0f, -1f);
+        Part("belly_FL", 300f, 0f, 0f, -1f); Part("belly_FR", 300f, 0f, 0f, -1f); Part("belly_AL", 300f, 0f, 0f, -1f); Part("belly_AR", 300f, 0f, 0f, -1f);
+        Part("fuselage_F", 3000f, 0f, 0.15f, 0f);
+        Part("fuselage_F_skL", 1000f, 0f, 0f, -1f); Part("fuselage_F_skR", 1000f, 0f, 0f, -1f);
+        Part("cockpit_R", 3000f, 0f, 0.2f, -1f);
+        Part("cockpit_R_skL", 1000f, 0f, 0f, -1f); Part("cockpit_R_skR", 1000f, 0f, 0f, -1f);
+        Part("cockpit_F", 1100f, 0f, 0.15f, -1f);
+        Part("cockpit_F_skL", 350f, 0f, 0f, -1f); Part("cockpit_F_skR", 350f, 0f, 0f, -1f);
+        Part("nose", 180f, 0f, 0.1f, -1f);
+        Part("nose_skL", 60f, 0f, 0f, -1f); Part("nose_skR", 60f, 0f, 0f, -1f);
+        Part("fuselage_R", 3300f, 0f, 0.2f, 0f);
+        Part("fuselage_R_skL", 1100f, 0f, 0f, -1f); Part("fuselage_R_skR", 1100f, 0f, 0f, -1f);
+        Part("tail", 825f, 0f, 0.15f, -1f);
+        Part("tail_skL", 225f, 0f, 0f, -1f); Part("tail_skR", 225f, 0f, 0f, -1f); Part("tail_skB", 225f, 0f, 0f, -1f);
+        Part("vstab_L", 500f, 10f, 0.03f, -1f); Part("vstab_R", 210f, 4.5f, 0.015f, -1f); Part("fintip", 90f, 1.5f, 0.005f, -1f);
+        Part("rudder_L", 120f, 3.6f, 0f, -1f); Part("rudder_R", 70f, 2.2f, 0f, -1f); Part("ruddertip", 30f, 0.8f, 0f, -1f);
+        // pieces come away before the sections they hang on: the fuselage shells and belly panels at 15 % health, tips at 10 %
+        foreach (var n in new[] { "fuselage_skL", "fuselage_skR", "belly_FL", "belly_FR", "belly_AL", "belly_AR", "fuselage_F_skL", "fuselage_F_skR",
+                                  "cockpit_R_skL", "cockpit_R_skR", "cockpit_F_skL", "cockpit_F_skR", "nose_skL", "nose_skR",
+                                  "fuselage_R_skL", "fuselage_R_skR", "tail_skL", "tail_skR", "tail_skB" })
+            Set(AP(n), "structuralThreshold", 15f);
+        foreach (var n in new[] { "fintip", "ruddertip", "hstabtip_L", "hstabtip_R", "elevtip_L", "elevtip_R" }) Set(AP(n), "structuralThreshold", 10f);
         foreach (var s in new[] { "L", "R" })
         {
             // main wing areas cut 20% in 0.3.5: loaded takeoff was ~245 km/h, a heavy A220-300 rotates nearer 270-280
@@ -1347,9 +1661,9 @@ public static class P220Builder
             Part("aileron_" + s, 120f, 5.2f, 0f, -1f);
             Part("intake_" + s, 300f, 0f, 0.03f, -1f);
             Part("engine_" + s, 2300f, 0f, 0.25f, -1f);
-            Part("hstab_" + s, 450f, 12f, 0.04f, -1f);
-            Part("elevator_" + s, 150f, 6.5f, 0f, -1f);
-            foreach (var w in new[] { "wing1a_", "wing1b_", "wing2_", "wing3_", "wingtip_", "hstab_", "aileron_", "elevator_" })
+            Part("hstab_" + s, 340f, 9f, 0.03f, -1f); Part("hstabtip_" + s, 110f, 3f, 0.01f, -1f);
+            Part("elevator_" + s, 115f, 5f, 0f, -1f); Part("elevtip_" + s, 35f, 1.5f, 0f, -1f);
+            foreach (var w in new[] { "wing1a_", "wing1b_", "wing2_", "wing3_", "wingtip_", "hstab_", "aileron_", "elevator_", "hstabtip_", "elevtip_" })
                 Set(AP(w + s), "centerOfLift", Vector3.zero);
             // flap and aileron lift acts at the wing's quarter chord, not on the hinge line behind the CG
             var fq = (P("wing1b_" + s) + P("wing2_" + s)) * 0.5f;
@@ -1360,42 +1674,93 @@ public static class P220Builder
             Set(tj, "fuelConsumptionMin", 0.2f); Set(tj, "fuelConsumptionMax", 1.4f);
             Set(tj, "failureMessage", s == "L" ? "LEFT ENGINE FIRE" : "RIGHT ENGINE FIRE");
             Set(C(Need("nozzle_R" + s), "JetNozzle"), "IRMax", 4f);
-            var el = C(Need("elevator_" + s), "ControlSurface"); Set(el, "pitchRange", -17f); Set(el, "servoSpeed", 40f);   // pitch range was -25: pulled turns too hard
+            var el = C(Need("elevator_" + s), "ControlSurface"); Set(el, "pitchRange", -17f); Set(el, "servoSpeed", 40f);   // pitch range was -25: pulled turns too hard (the author 2026-11-01)
+            var et = C(Need("elevtip_" + s), "ControlSurface"); Set(et, "pitchRange", -17f); Set(et, "servoSpeed", 40f);
             var ai = C(Need("aileron_" + s), "ControlSurface"); Set(ai, "rollRange", s == "L" ? -26f : 26f); Set(ai, "servoSpeed", 50f);
         }
-        foreach (var s in new[] { "L", "R" }) { var ru = C(Need("rudder_" + s), "ControlSurface"); Set(ru, "yawRange", -28f); Set(ru, "servoSpeed", 35f); }
+        foreach (var n in new[] { "rudder_L", "rudder_R", "ruddertip" }) { var ru = C(Need(n), "ControlSurface"); Set(ru, "yawRange", -28f); Set(ru, "servoSpeed", 35f); }
         root.GetComponent<Rigidbody>().mass = 44700f;
 
         // joints: every part to its structural neighbours (jointed hulls may overlap; unjointed ones must not)
         // every fuselage section is held by its neighbour and by the section beyond it, so the long body stays stiff
         // instead of flexing at each single joint (the PB-22 layout)
-        Joints("nose", "cockpit_F", 150000f, "cockpit_R", 100000f);
-        Joints("cockpit_F", "cockpit_R", 600000f, "fuselage_F", 400000f);
-        Joints("cockpit_R", "fuselage_F", 800000f, root.name, 500000f);
-        Joints("fuselage_F", root.name, 1000000f, "fuselage_R", 500000f);
-        Joints("fuselage_R", root.name, 1000000f);
-        Joints("tail", "fuselage_R", 600000f, root.name, 300000f);
-        Joints("vstab_L", "tail", 400000f, "fuselage_R", 200000f);
-        Joints("vstab_R", "vstab_L", 250000f);
-        Joints("rudder_L", "vstab_L", 120000f, "tail", 60000f);
-        Joints("rudder_R", "vstab_R", 100000f, "rudder_L", 40000f);
+        // 0.4.2 (one Anvil 57 mm round broke the fuselage apart; wants 2 to 3 hits): fuselage joints x2.5
+        Joints("nose", "cockpit_F", 262500f, "cockpit_R", 175000f);
+        Joints("cockpit_F", "cockpit_R", 1050000f, "fuselage_F", 700000f);
+        Joints("cockpit_R", "fuselage_F", 1400000f, root.name, 875000f);
+        Joints("fuselage_F", root.name, 1750000f, "fuselage_R", 875000f);
+        Joints("fuselage_R", root.name, 1750000f);
+        Joints("tail", "fuselage_R", 1050000f, root.name, 525000f);
+        // 0.4.0: tail surface roots very strong, weaker towards the tips
+        Joints("vstab_L", "tail", 900000f, "fuselage_R", 300000f);
+        Joints("vstab_R", "vstab_L", 2000000f);   // 0.4.5 (flight loads broke the fin at the hinge): was 600k
+        // 0.4.6 (the upper rudder stopped responding while taxiing, then the upper fin broke off): each rudder half
+        // touched the other fin half at the split without a joint between them, so the two bodies rubbed and the light
+        // upper rudder took contact damage. A joint between them stops that contact; the upper rudder is held harder.
+        Joints("rudder_L", "vstab_L", 250000f, "tail", 80000f, "vstab_R", 80000f);
+        Joints("rudder_R", "vstab_R", 300000f, "rudder_L", 100000f, "vstab_L", 80000f);
         foreach (var s in new[] { "L", "R" })
         {
-            Joints("hstab_" + s, "tail", 300000f);
-            Joints("elevator_" + s, "hstab_" + s, 150000f, "tail", 60000f);
+            Joints("hstab_" + s, "tail", 700000f);
+            Joints("elevator_" + s, "hstab_" + s, 250000f, "tail", 80000f);
             // wing joints solve at 12 iterations like the PB-22's outer wing (less flex under load), and every outer
             // panel is also held by the panel beyond its neighbour, like the fuselage, so the span bends as one piece
             jointIterations = 12;
-            Joints("wing1a_" + s, root.name, 1800000f);
-            Joints("wing1b_" + s, "wing1a_" + s, 1400000f, root.name, 1000000f);
-            Joints("wing2_" + s, "wing1b_" + s, 1200000f, "wing1a_" + s, 600000f);
-            Joints("wing3_" + s, "wing2_" + s, 900000f, "wing1b_" + s, 400000f);
-            Joints("wingtip_" + s, "wing3_" + s, 300000f, "wing2_" + s, 120000f);
+            // 0.4.0: wing roots very strong, each panel weaker than the one inboard of it
+            Joints("wing1a_" + s, root.name, 2500000f);
+            Joints("wing1b_" + s, "wing1a_" + s, 2000000f, root.name, 1200000f);
+            Joints("wing2_" + s, "wing1b_" + s, 1400000f, "wing1a_" + s, 600000f);
+            Joints("wing3_" + s, "wing2_" + s, 800000f, "wing1b_" + s, 300000f);
+            Joints("wingtip_" + s, "wing3_" + s, 250000f, "wing2_" + s, 80000f);
             Joints("flap_" + s, "wing2_" + s, 1000000f, "wing1b_" + s, 1000000f, "wing1a_" + s, 500000f, root.name, 250000f);
             Joints("aileron_" + s, "wing3_" + s, 500000f, "wing2_" + s, 200000f);
             jointIterations = 6;
             Joints("intake_" + s, "wing1b_" + s, 600000f);
             Joints("engine_" + s, "intake_" + s, 500000f, "wing1b_" + s, 300000f);
+        }
+        // damage pieces: held hardest by the part they were cut from, then by every other part their hull touches
+        jointIterations = 6;
+        foreach (var p in PIECES)
+        {
+            bool tip = p.name.Contains("tip");
+            float own = p.name.StartsWith("belly_") ? 350000f : p.name == "hstabtip_L" || p.name == "hstabtip_R" ? 200000f : p.name == "fintip" ? 150000f
+                      : p.name.StartsWith("elevtip_") || p.name == "ruddertip" ? 80000f : 437500f;
+            var pairs = new List<object> { p.of == "fuselage" ? root.name : p.of, own };
+            foreach (var o in p.touch)
+            {
+                if (o == p.of) continue;
+                pairs.Add(o == "fuselage" ? root.name : o); pairs.Add(tip ? 40000f : 210000f);
+            }
+            Joints(p.name, pairs.ToArray());
+        }
+        // 0.4.4: fuselage, cockpit and nose pieces copy the Darkreach armour; tail pieces back to the Medusa values.
+        // Wings, engines and surfaces keep the Medusa values they inherited. Literal values.
+        {
+            var armor = new Dictionary<string, float[]>   // { pierceArmor, pierceTolerance, blastTolerance }
+            {
+                { root.name, new[] { 15f, 20f, 5f } },
+                { "fuselage_skL", new[] { 15f, 20f, 5f } }, { "fuselage_skR", new[] { 15f, 20f, 5f } },
+                { "belly_FL", new[] { 15f, 20f, 5f } }, { "belly_FR", new[] { 15f, 20f, 5f } }, { "belly_AL", new[] { 15f, 20f, 5f } }, { "belly_AR", new[] { 15f, 20f, 5f } },
+                { "fuselage_F", new[] { 15f, 20f, 5f } }, { "fuselage_F_skL", new[] { 15f, 20f, 5f } }, { "fuselage_F_skR", new[] { 15f, 20f, 5f } },
+                { "fuselage_R", new[] { 15f, 20f, 5f } }, { "fuselage_R_skL", new[] { 15f, 20f, 5f } }, { "fuselage_R_skR", new[] { 15f, 20f, 5f } },
+                { "cockpit_R", new[] { 15f, 20f, 5f } }, { "cockpit_R_skL", new[] { 15f, 20f, 5f } }, { "cockpit_R_skR", new[] { 15f, 20f, 5f } },
+                { "cockpit_F", new[] { 15f, 20f, 5f } }, { "cockpit_F_skL", new[] { 15f, 20f, 5f } }, { "cockpit_F_skR", new[] { 15f, 20f, 5f } },
+                { "nose", new[] { 10f, 5f, 2.5f } }, { "nose_skL", new[] { 10f, 5f, 2.5f } }, { "nose_skR", new[] { 10f, 5f, 2.5f } },
+                { "tail", new[] { 30f, 6f, 2f } }, { "tail_skL", new[] { 30f, 6f, 2f } }, { "tail_skR", new[] { 30f, 6f, 2f } }, { "tail_skB", new[] { 30f, 6f, 2f } },
+            };
+            // 0.4.11 (still too tough against Anvil 57 mm airbursts): fuselage, belly and root blastArmor 70 -> 60,
+            // cockpit 80 -> 70, and their blastTolerance 5 -> 4. Nose and tail pieces unchanged.
+            foreach (var kv in armor)
+            {
+                var t = kv.Key == root.name ? root : Need(kv.Key);
+                var so = new SerializedObject(C(t, "AeroPart"));
+                so.FindProperty("armorProperties.pierceArmor").floatValue = kv.Value[0];
+                so.FindProperty("armorProperties.pierceTolerance").floatValue = kv.Value[1];
+                bool body = !kv.Key.StartsWith("nose") && !kv.Key.StartsWith("tail");
+                so.FindProperty("armorProperties.blastTolerance").floatValue = body ? 4f : kv.Value[2];
+                if (body) so.FindProperty("armorProperties.blastArmor").floatValue = kv.Key.StartsWith("cockpit") ? 70f : 60f;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
         }
         // centre of mass report: parts at their hull centres plus half fuel
         float m = 0f; Vector3 sum = Vector3.zero;
@@ -1512,10 +1877,21 @@ public static class P220Builder
             var cone = new GameObject("laser_arcCone").transform; cone.SetParent(go.transform, false);
             cone.localPosition = Vector3.zero;
             cone.localRotation = Quaternion.LookRotation(new Vector3(0f, Mathf.Cos(50f * Mathf.Deg2Rad), Mathf.Sin(50f * Mathf.Deg2Rad)), Vector3.right);
-            var tso = new SerializedObject(tur); var fcs = tso.FindProperty("firingCones"); fcs.arraySize = 1;
+            // 0.4.12: the ball must not be able to aim into the airframe. A stock exclusion cone (as stock turrets
+            // use) 83 deg around a line 24 deg above straight ahead. Fitted to a ray sweep from the ball against the
+            // P220's colliders: every direction the beam would hit the tail cone, stabilisers or wing is inside it with
+            // at least 1 deg to spare (blocked directions reach ~81.5 deg off that line at the stabiliser tips). The turret then never points there,
+            // never picks targets there and the HUD shows OUT OF ARC for them.
+            var noGo = new GameObject("laser_airframeCone").transform; noGo.SetParent(go.transform, false);
+            noGo.localPosition = Vector3.zero;
+            noGo.localRotation = Quaternion.LookRotation(new Vector3(0f, -Mathf.Cos(24f * Mathf.Deg2Rad), -Mathf.Sin(24f * Mathf.Deg2Rad)), Vector3.right);
+            var tso = new SerializedObject(tur); var fcs = tso.FindProperty("firingCones"); fcs.arraySize = 2;
             fcs.GetArrayElementAtIndex(0).FindPropertyRelative("transform").objectReferenceValue = cone;
             fcs.GetArrayElementAtIndex(0).FindPropertyRelative("coneAngle").floatValue = 125f;
             fcs.GetArrayElementAtIndex(0).FindPropertyRelative("exclusion").boolValue = false;
+            fcs.GetArrayElementAtIndex(1).FindPropertyRelative("transform").objectReferenceValue = noGo;
+            fcs.GetArrayElementAtIndex(1).FindPropertyRelative("coneAngle").floatValue = 83f;
+            fcs.GetArrayElementAtIndex(1).FindPropertyRelative("exclusion").boolValue = true;
             tso.ApplyModifiedPropertiesWithoutUndo();
             Object.DestroyImmediate(C(lt, "TargetDetector"));
             Object.DestroyImmediate(lt.GetComponent<SphereCollider>());
@@ -1542,6 +1918,7 @@ public static class P220Builder
             var aim = lb.Find("aimTransform"); aim.localPosition = new Vector3(0f, 0f, 0.31f); aim.localRotation = Quaternion.identity;
             var info = ThornInfo();
             Set(lz, "info", info);
+            Skinnable(go, hood.GetComponent<Renderer>());   // the hood takes the livery like the airframe (stock ColorableMount)
             var m = SaveMount(go, "P220_laser20", "laser_EW1", info, "THORNE Airborne Laser");
             Set(m, "turret", true);
             log.AppendLine("laser turret: " + string.Join(", ", go.GetComponentsInChildren<Component>(true).Select(c => c.GetType().Name)));
@@ -1555,7 +1932,10 @@ public static class P220Builder
             rd.localPosition = Vector3.zero; rd.localRotation = Quaternion.identity;
             var mf = rd.GetComponent<MeshFilter>(); mf.sharedMesh = M["globaleye"];
             rd.GetComponent<MeshRenderer>().sharedMaterials = new[] { MAT["P220_skin"] };
-            var mc = rd.GetComponent<MeshCollider>(); if (mc != null) { mc.convex = true; mc.sharedMesh = M["globaleye_colmesh"]; }
+            var mc = rd.GetComponent<MeshCollider>(); if (mc != null) Object.DestroyImmediate(mc, true);
+            // 0.4.3: box over the beam only; the hull of beam + struts reached 6-15 cm into the top shells and damaged them at spawn
+            var bc = rd.GetComponent<BoxCollider>(); if (bc == null) bc = rd.gameObject.AddComponent<BoxCollider>();
+            bc.center = new Vector3(0f, 1.06f, 0f); bc.size = new Vector3(0.62f, 0.96f, 8.0f);
             var sp = go.transform.Find("spinner");
             var radar = C(go.transform, "Radar");
             var rso = new SerializedObject(radar);
@@ -1574,9 +1954,53 @@ public static class P220Builder
             }
             rso.ApplyModifiedPropertiesWithoutUndo();
             if (sp != null) Object.DestroyImmediate(sp.gameObject);
+            Skinnable(go, rd.GetComponent<Renderer>());   // Medusa listed the radome as colorable (tint only); ours is livery-mapped
             SaveMount(go, "P220_GlobalEye", "Radome1", null, "SpectralEye AEW Radar");
         }
         finally { Object.DestroyImmediate(go); }
+    }
+
+    // 0.4.14 (bay doors stayed demonstrator green, slats/flaps/spoilers stayed white on other liveries): the game
+    // writes the livery texture only into renderers listed in a part's damageMaterial.renderers (a part with an empty list
+    // gets just its own renderer), so every P220_skin renderer that is not a part itself is added to its owning part.
+    static void SkinRegister()
+    {
+        var listed = new HashSet<Renderer>(); var parts = new List<Component>();
+        foreach (var c in root.GetComponentsInChildren<Component>(true))
+        {
+            if (c == null) continue; bool up = false;
+            for (var b = c.GetType(); b != null; b = b.BaseType) if (b.Name == "UnitPart") { up = true; break; }
+            if (!up) continue; parts.Add(c);
+            var so = new SerializedObject(c); var p = so.FindProperty("damageMaterial.renderers"); if (p == null) continue;
+            for (int i = 0; i < p.arraySize; i++) { var r = p.GetArrayElementAtIndex(i).objectReferenceValue as Renderer; if (r != null) listed.Add(r); }
+        }
+        int added = 0;
+        foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+        {
+            var sm = r.sharedMaterials; if (sm.Length == 0 || sm[0] == null || sm[0].name != "P220_skin" || listed.Contains(r)) continue;
+            Component owner = null;
+            for (var t = r.transform; t != null && owner == null; t = t.parent)
+                foreach (var c in parts) if (c.transform == t) { owner = c; break; }
+            if (owner == null) { log.AppendLine("skin renderer without part: " + r.name); continue; }
+            if (owner.transform == r.transform) continue;   // a part's own renderer is picked up by the game when its list is empty
+            var so = new SerializedObject(owner); var p = so.FindProperty("damageMaterial.renderers");
+            if (p.arraySize == 0) { var own = owner.GetComponent<Renderer>(); if (own != null) { p.arraySize = 1; p.GetArrayElementAtIndex(0).objectReferenceValue = own; listed.Add(own); } }
+            p.arraySize++; p.GetArrayElementAtIndex(p.arraySize - 1).objectReferenceValue = r; so.ApplyModifiedPropertiesWithoutUndo();
+            listed.Add(r); added++;
+        }
+        log.AppendLine("livery renderers added to parts: " + added);
+    }
+
+    static void Skinnable(GameObject go, params Renderer[] rs)
+    {
+        var cm = C(go.transform, "ColorableMount");
+        if (cm == null)
+        {
+            System.Type ct = null;
+            foreach (var a in System.AppDomain.CurrentDomain.GetAssemblies()) { ct = a.GetType("ColorableMount"); if (ct != null) break; }
+            cm = go.AddComponent(ct);
+        }
+        ObjArray(cm, "colorableRenderers"); ObjArray(cm, "skinnableRenderers", rs);
     }
 
     // ------------------------------------------------------------------ damage diagram: copy of the Medusa status display with the P220 planform.
@@ -1659,7 +2083,7 @@ public static class P220Builder
         var par = AssetDatabase.LoadMainAssetAtPath(PAR);
         var so = new SerializedObject(par);
         so.FindProperty("aircraftName").stringValue = "P220 Primrose";
-        so.FindProperty("rankRequired").intValue = 0;
+        so.FindProperty("rankRequired").intValue = 2;   // rank 2 (the author 2026-11-08)
         so.FindProperty("aircraftGLimit").floatValue = 2.5f;
         so.FindProperty("PIDReferenceAirspeed").floatValue = 200f;
         so.FindProperty("maxSpeed").floatValue = 240f;
@@ -1675,25 +2099,44 @@ public static class P220Builder
         so.FindProperty("DefaultFuelLevel").floatValue = 0.5f;
         so.FindProperty("cruiseThrottle").floatValue = 0.8f;
         // the Medusa HUD's nozzle and hover apps expect its STOVL systems; the Darkreach set is the plain subsonic jet one
-        so.FindProperty("HUDExtras").objectReferenceValue = AssetDatabase.LoadAssetAtPath<GameObject>(PH + "GameObject/SFB_HUDExtras_PLACEHOLDER.prefab");
-        // own damage diagram: P220 planform, one full-frame sprite per airframe part, like the PB-22
+        so.FindProperty("HUDExtras").objectReferenceValue = HudExtras();
+        // own damage diagram (the author 2026-11-01): P220 planform, one full-frame sprite per airframe part, like the PB-22
         var sdp = StatusDisplayP220();
         if (sdp != null) so.FindProperty("StatusDisplay").objectReferenceValue = sdp;
         // house livery (0.3.27): Primeva Link olive and white, painted into the one skin texture like the stock liveries
-        var liv = so.FindProperty("liveries"); liv.arraySize = 1;
-        var li = liv.GetArrayElementAtIndex(0);
-        li.FindPropertyRelative("name").stringValue = "P-LINK Demonstrator";
-        li.FindPropertyRelative("faction").objectReferenceValue = null;
-        li.FindPropertyRelative("assetReference.m_AssetGUID").stringValue = AssetDatabase.AssetPathToGUID(LIVERY);
-        li.FindPropertyRelative("assetReference.m_SubObjectName").stringValue = "";
-        // three hardpoint sets: tail laser, dorsal radar, wing pylons
+        // 0.4.13 (the author 2026-11-08): + Primeva Link line service (any faction) and the PALA air force grey, locked to PALA
+        // like the stock faction liveries (the faction placeholder is swapped for the game's Faction by the mod builder)
+        string[,] LIVS = { { "P-LINK Demonstrator", "P220_livery_plink", "" }, { "Primeva Link Service", "P220_livery_civil", "" },
+                           { "PALA Air Force Grey", "P220_livery_pala", "Primeva" } };
+        var liv = so.FindProperty("liveries"); liv.arraySize = LIVS.GetLength(0);
+        for (int i = 0; i < LIVS.GetLength(0); i++)
+        {
+            var li = liv.GetArrayElementAtIndex(i);
+            li.FindPropertyRelative("name").stringValue = LIVS[i, 0];
+            Object fac = null;
+            if (LIVS[i, 2] != "")
+            {
+                fac = AssetDatabase.LoadMainAssetAtPath("Assets/Blueprinter/_donotship/MonoBehaviour/" + LIVS[i, 2] + "_PLACEHOLDER.asset");
+                if (fac == null) log.AppendLine("MISSING FACTION " + LIVS[i, 2]);
+            }
+            li.FindPropertyRelative("faction").objectReferenceValue = fac;
+            string guid = AssetDatabase.AssetPathToGUID(ART + LIVS[i, 1] + ".asset");
+            if (string.IsNullOrEmpty(guid)) log.AppendLine("MISSING LIVERY " + LIVS[i, 1]);
+            li.FindPropertyRelative("assetReference.m_AssetGUID").stringValue = guid;
+            li.FindPropertyRelative("assetReference.m_SubObjectName").stringValue = "";
+        }
         var lo = so.FindProperty("loadouts");
         for (int i = 0; i < lo.arraySize; i++)
         {
             var w = lo.GetArrayElementAtIndex(i).FindPropertyRelative("weapons"); w.arraySize = 6;
             for (int k = 0; k < 6; k++) w.GetArrayElementAtIndex(k).objectReferenceValue = null;
+            // default loadout (0.3.29): radar, MMR-S3 x2 on the wings, AGM-99 x2 left and PAB-80LR x4 right in the bay, tail laser
             w.GetArrayElementAtIndex(0).objectReferenceValue = Mount("P220_GlobalEye");
+            w.GetArrayElementAtIndex(1).objectReferenceValue = Mount("AAM1_double");
+            w.GetArrayElementAtIndex(2).objectReferenceValue = Mount("AShM2_internalx2_stack");
+            w.GetArrayElementAtIndex(3).objectReferenceValue = Mount("bomb_glide1_quad_internal");
             w.GetArrayElementAtIndex(5).objectReferenceValue = Mount("P220_laser20");
+            for (int k = 1; k <= 3; k++) if (w.GetArrayElementAtIndex(k).objectReferenceValue == null) log.AppendLine("default loadout: slot " + k + " mount not found");
         }
         so.ApplyModifiedPropertiesWithoutUndo(); EditorUtility.SetDirty(par);
 
@@ -1717,11 +2160,11 @@ public static class P220Builder
         }
         else log.AppendLine("NO ICON at " + ip);
         so.FindProperty("mapIconSize").floatValue = 1.3f;
-        so.FindProperty("radarSize").floatValue = 2f;   // RCS 2: an airliner-sized return
+        so.FindProperty("radarSize").floatValue = 2f;   // RCS 2 (the author 2026-11-01): an airliner-sized return
         so.FindProperty("length").floatValue = 38.7f;
         so.FindProperty("width").floatValue = 35.1f;
         so.FindProperty("height").floatValue = 11.5f;
-        so.FindProperty("value").floatValue = 0f;
+        so.FindProperty("value").floatValue = 95f;   // the author 2026-11-08: under the Medusa (145), airliner conversion; between Vortex 90 and Tarantula 118
         so.FindProperty("mass").floatValue = 44700f;
         so.FindProperty("spawnOffset").vector3Value = new Vector3(0f, 3.86f, 0f);
         so.FindProperty("unitPrefab").objectReferenceValue = pf;

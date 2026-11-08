@@ -16,6 +16,9 @@ namespace P220Primrose
         private FieldInfo hudInstance;
         private Component aircraft;
         private readonly Dictionary<string, Pedal> pedals = new Dictionary<string, Pedal>();
+        // 0.4.11: the gear lever follows the gear; it slides up its slot from the DN detent to the UP detent
+        private Transform gearLever; private Vector3 gearLeverRest; private float gearLeverPos;
+        private static readonly Vector3 GearLeverTravel = new Vector3(0f, 0.1291f, 0.0274f);
         private readonly Dictionary<string, Behaviour> lamps = new Dictionary<string, Behaviour>();
         private Component eng1, eng2;
         private readonly List<Component> tanks = new List<Component>(), jammers = new List<Component>(), lasers = new List<Component>(),
@@ -70,13 +73,14 @@ namespace P220Primrose
 
         private void Bind(Component ac)
         {
-            aircraft = ac; pedals.Clear(); lamps.Clear(); reported = false; eng1 = eng2 = null;
+            aircraft = ac; pedals.Clear(); lamps.Clear(); reported = false; eng1 = eng2 = null; gearLever = null; gearLeverPos = 0f;
             foreach (var l in new[] { tanks, jammers, lasers, bays, airbrakes, hydParts, elecParts }) l.Clear();
             nextLampScan = 0f;
             var roots = R.Roots(ac);
             foreach (var r in roots) foreach (var t in r.GetComponentsInChildren<Transform>(true))
             {
                 if (t.name.StartsWith("P220_pedal_")) pedals[t.name.Substring(11)] = new Pedal { t = t, rest = t.localPosition };
+                if (t.name == "P220_gearLever") { gearLever = t; gearLeverRest = t.localPosition; }
                 if (t.name == "engine_1") eng1 = R.Comp(t, "Turbojet");
                 if (t.name == "engine_2") eng2 = R.Comp(t, "Turbojet");
             }
@@ -91,6 +95,8 @@ namespace P220Primrose
                     foreach (var p in r.GetComponentsInChildren(unitPartType, true))
                     {
                         string n = p.name.ToLowerInvariant();
+                        // damage pieces (shells, belly panels, tips) can go without the systems inside going with them
+                        if (n.Contains("_sk") || n.StartsWith("belly_") || n.Contains("tip")) continue;
                         if (Array.Exists(HydNames, s => n.StartsWith(s))) hydParts.Add(p);
                         else if (Array.Exists(ElecNames, s => n.StartsWith(s))) elecParts.Add(p);
                     }
@@ -132,6 +138,12 @@ namespace P220Primrose
             bool airborne = alt > 4f;
             int gear = (int)R.Fl(ac, "gearState");          // 2 locked down, 3 retracting, 4 extending
             bool gearDown = gear == 2;
+            if (gearLever != null)
+            {
+                float want = gear == 1 || gear == 3 ? 1f : 0f;      // up while locked up or retracting, down otherwise
+                gearLeverPos = Mathf.MoveTowards(gearLeverPos, want, dt * 4f);
+                gearLever.localPosition = gearLeverRest + GearLeverTravel * gearLeverPos;
+            }
             // ---- critical strip
             bool fire1 = EngineFire(eng1), fire2 = EngineFire(eng2);
             foreach (var tk in tanks)

@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 from scipy.spatial import cKDTree
 from scipy import ndimage
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, '/mnt/project-files/tu22/art/scripts/tex')
 from tex_paint import vnoise
 from tex_feat import hash01
 
@@ -73,7 +73,7 @@ def run(maps, heightpng, dmg_in, out):
     groove = ndimage.binary_dilation(groove, iterations=1)
     alpha = np.where(groove.ravel()[C[J]], 1.0, alpha)
     # 1.0.5: no solid band at the part joints any more. Stock joints are straight cuts that tear like the rest of the
-    # skin, so the break edge reads as the ragged shard pattern, not as the cut itself (full stock)
+    # skin, so the break edge reads as the ragged shard pattern, not as the cut itself (the author 2026-10-27, full stock)
     if os.environ.get('PB22_SEAM_BAND') == '1':
         skin = np.array([not any(n.startswith(x) for x in NOT_SKIN) for n in names])
         onskin = skin[pid]
@@ -106,14 +106,20 @@ def run(maps, heightpng, dmg_in, out):
     # space: texels whose neighbour is in the same island but at another alpha level; 1.4-3.4 cm each side, in dashes.
     cov = m['cov']
     Af = A.reshape(S, S).astype(np.int16)
-    bnd = np.zeros((S, S), bool)
+    bnd = np.zeros((S, S), bool); bmin = np.full((S, S), 255, np.int16)
     for dy, dx in ((0, 1), (1, 0)):
         a0 = Af[:S - dy, :S - dx]; a1 = Af[dy:, dx:]; c0 = cov[:S - dy, :S - dx] & cov[dy:, dx:]
         pa = m['pos'][:S - dy, :S - dx]; pb = m['pos'][dy:, dx:]
         near = np.linalg.norm(pa - pb, axis=-1) < 0.05           # same island (atlas neighbours, not across a seam)
         e = c0 & near & (np.abs(a0 - a1) > 8)
         bnd[:S - dy, :S - dx] |= e; bnd[dy:, dx:] |= e
-    dist = ndimage.distance_transform_edt(~bnd)
+        mn = np.minimum(a0, a1)
+        bmin[:S - dy, :S - dx] = np.where(e, np.minimum(bmin[:S - dy, :S - dx], mn), bmin[:S - dy, :S - dx])
+        bmin[dy:, dx:] = np.where(e, np.minimum(bmin[dy:, dx:], mn), bmin[dy:, dx:])
+    dist, (by, bx) = ndimage.distance_transform_edt(~bnd, return_indices=True)
+    # how soon the border tears open: lines round shards that open early are full strength, borders between
+    # late-opening shards stay faint, so a lightly damaged part shows a few scorched tears, not a crack net
+    early = np.clip((215.0 - bmin[by, bx]) / 110.0, 0.12, 1.0).ravel()[C[J]]
     # texels per metre from neighbouring texel positions
     pa = m['pos'][:, :-1].reshape(-1, 3); pb = m['pos'][:, 1:].reshape(-1, 3)
     cc = (cov[:, :-1] & cov[:, 1:]).ravel()
@@ -121,12 +127,17 @@ def run(maps, heightpng, dmg_in, out):
     ppm = 1.0 / float(np.median(st))
     wid = (0.014 + 0.020 * np.clip(0.5 + 0.8 * vnoise(P, 0.12, seed=71, octaves=2), 0, 1)) * ppm
     dash = np.clip(0.5 + 1.4 * vnoise(P, 0.06, seed=72, octaves=2), 0, 1)
-    rim = np.clip(1.0 - dist.ravel()[C[J]] / wid, 0, 1) * (0.35 + 0.65 * dash)
+    rim = np.clip(1.0 - dist.ravel()[C[J]] / wid, 0, 1) * (0.35 + 0.65 * dash) * early
     if wheel.any(): rim[wheel] = 0
     RGB = img[..., :3].reshape(-1, 3)
     c0 = RGB[C[J]].astype(np.float32)
     soot = np.array([34, 31, 29], np.float32)
-    RGB[C[J]] = np.clip(c0 * (1 - 0.85 * rim[:, None]) + soot * 0.85 * rim[:, None], 0, 255).astype(np.uint8)
+    # soot fringe: smoke staining fading out 4-8 cm from each tear line, broken up by noise, under the hard rim
+    fw = (0.04 + 0.04 * np.clip(0.5 + 0.8 * vnoise(P, 0.2, seed=73, octaves=2), 0, 1)) * ppm
+    fr = np.clip(1.0 - dist.ravel()[C[J]] / fw, 0, 1) ** 2 * early * (0.14 + 0.20 * np.clip(0.5 + vnoise(P, 0.05, seed=74, octaves=2), 0, 1))
+    if wheel.any(): fr[wheel] = 0
+    c0 = c0 * (1 - fr[:, None])
+    RGB[C[J]] = np.clip(c0 * (1 - 0.65 * rim[:, None]) + soot * 0.65 * rim[:, None], 0, 255).astype(np.uint8)   # 0.4.0: 0.85 read too heavy at 35 %
     print('torn rims: %.1f%% of texels' % (100 * (rim > 0.2).mean()))
     # pad: texels outside the islands take the nearest island value, so mip levels don't bleed old alpha in
     cov = m['cov']

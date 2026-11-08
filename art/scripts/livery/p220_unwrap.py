@@ -51,8 +51,8 @@ for o in objs:
         mw = o.matrix_world
         cs = [mw @ f.calc_center_median() for f in isl]; ns = [(mw.to_3x3() @ f.normal).normalized() for f in isl]
         k = 1.0
-        if o.name.startswith(('vstab_', 'rudder_')): k = 2.0
-        elif o.name in FUSE:
+        if o.name.startswith(('vstab_', 'rudder_', 'fintip', 'ruddertip')): k = 2.0
+        elif o.name.startswith(FUSE):   # 0.4.0: and the damage pieces cut from them (fuselage_F_skL ...)
             ax = sum(abs(n.x) for n in ns) / len(ns); zc = sum(c.z for c in cs) / len(cs)
             if ax > 0.45 and -0.8 < zc < 2.0: k = 1.8
         if k == 1.0: continue

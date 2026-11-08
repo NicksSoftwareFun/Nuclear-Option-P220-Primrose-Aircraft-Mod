@@ -64,16 +64,17 @@ for o in exp.objects:
     uvl = bm.loops.layers.uv.active or bm.loops.layers.uv.new('UVMap')
     sk_i = [i for i, m in enumerate(o.data.materials) if m and m.name == 'P220_skin']
     gl = [i for i, m in enumerate(o.data.materials) if m and m.name in ('P220_glass', 'P220_glass_int')]
+    keep_uv = [i for i, m in enumerate(o.data.materials) if m and m.name == 'P220_fanblur']   # 0.3.29: blur disc keeps its own UVs
     # internal structure (0.3.25): the game's shared tiling structure materials, box-projected at stock world scale
     # (about 2.5 m per UV unit, as the stock parts and the PB-22)
-    st = [i for i, m in enumerate(o.data.materials) if m and m.name in ('P220_mech', 'P220_struct')]
+    st = [i for i, m in enumerate(o.data.materials) if m and m.name in ('P220_mech', 'P220_struct', 'P220_bay', 'P220_lining')]   # 0.4.7: interior maps tile the same way
     for f in bm.faces:
         if f.material_index in st:
             n = f.normal; ax = max(range(3), key=lambda i: abs(n[i]))
             for lp in f.loops:
                 c = lp.vert.co; u, v = [(c.y, c.z), (c.x, c.z), (c.x, c.y)][ax]; lp[uvl].uv = (u / 2.5, v / 2.5)
             continue
-        if f.material_index in sk_i: continue
+        if f.material_index in sk_i or f.material_index in keep_uv: continue
         for lp in f.loops: lp[uvl].uv = (0.25, 0.5) if f.material_index in gl else (0.0, 0.0)
     bm.faces.sort(key=lambda f: f.material_index)
     bm.to_mesh(o.data); bm.free()

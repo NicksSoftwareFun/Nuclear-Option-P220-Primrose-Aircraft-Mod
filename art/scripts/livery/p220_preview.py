@@ -8,9 +8,11 @@ sc = bpy.context.scene
 for cn in ('COLLISION', 'POINTS'):
     c = bpy.data.collections.get(cn)
     if c: c.hide_render = True
+# same smoothing as the game export (smooth by angle 35 deg), so the preview shades like the game
 for o in bpy.data.collections['MODEL'].objects:
-    if o.type == 'MESH':
-        for p in o.data.polygons: p.use_smooth = True
+    o.select_set(o.type == 'MESH')
+bpy.context.view_layer.objects.active = next(o for o in bpy.data.collections['MODEL'].objects if o.type == 'MESH')
+bpy.ops.object.shade_smooth_by_angle(angle=math.radians(35))
 def img(n, cs):
     i = bpy.data.images.load(os.path.join(tex, n)); i.colorspace_settings.name = cs; return i
 cols = {'P220_mech': (0.30, 0.31, 0.32), 'P220_struct': (0.45, 0.44, 0.40), 'P220_bay': (0.30, 0.31, 0.32),
@@ -31,7 +33,8 @@ for m in bpy.data.materials:
         nm = nt.nodes.new('ShaderNodeNormalMap'); nt.links.new(tn.outputs['Color'], nm.inputs['Color']); nt.links.new(nm.outputs['Normal'], b.inputs['Normal'])
         tm = nt.nodes.new('ShaderNodeTexImage'); tm.image = img('P220_skin_m.png', 'Non-Color')
         inv = nt.nodes.new('ShaderNodeMath'); inv.operation = 'SUBTRACT'; inv.inputs[0].default_value = 1.0
-        nt.links.new(tm.outputs['Alpha'], inv.inputs[1]); nt.links.new(inv.outputs[0], b.inputs['Roughness'])
+        sms = nt.nodes.new('ShaderNodeMath'); sms.operation = 'MULTIPLY'; sms.inputs[1].default_value = float(os.environ.get('SMSCALE', '1'))
+        nt.links.new(tm.outputs['Alpha'], sms.inputs[0]); nt.links.new(sms.outputs[0], inv.inputs[1]); nt.links.new(inv.outputs[0], b.inputs['Roughness'])
     else:
         b.inputs['Base Color'].default_value = (*cols.get(m.name, tuple(m.diffuse_color)[:3]), 1); b.inputs['Roughness'].default_value = 0.6
 sc.render.engine = 'CYCLES'; sc.cycles.device = 'CPU'; sc.cycles.samples = int(os.environ.get('SAMP', '24')); sc.cycles.use_denoising = True
@@ -50,7 +53,8 @@ SHOTS = {'3q_front': ((-24, 22, 9), (0, 0, -0.5), 45), '3q_rear': ((22, -26, 10)
          'below': ((-10, 8, -30), (0, 0, -1.5), 45), 'engine': ((-11, 9.0, -1.4), (-5.35, 5.5, -2.25), 40),
          'fwd_door': ((-6.5, 14.6, 0.6), (-1.6, 14.4, 0.3), 40),
          'fin_close': ((-7.5, -15.0, 4.6), (0, -15.3, 4.4), 50), 'rear_door': ((-7.0, -9.5, 0.4), (-1.6, -11.0, 0.3), 40),
-         'prim_close': ((-7.0, 9.8, 1.6), (-1.6, 10.2, 1.2), 45)}
+         'prim_close': ((-7.0, 9.8, 1.6), (-1.6, 10.2, 1.2), 45),
+         'belly': ((0, 9.3, -24), (0, 9.3, 0), 40), 'belly_mid': ((0, 2.5, -30), (0, 2.5, 0), 40), 'nose_tip': ((-3.2, 21.6, 0.0), (0, 18.9, -0.55), 45), 'pala_close': ((-12, 4.0, 3.0), (0, 2.0, 0.6), 40), 'fwd_door_s': ((6.5, 13.6, 0.4), (1.6, 13.6, 0.1), 40)}
 only = os.environ.get('SHOTS')
 for nm, (loc, tgt, lens) in SHOTS.items():
     if only and nm not in only.split(','): continue

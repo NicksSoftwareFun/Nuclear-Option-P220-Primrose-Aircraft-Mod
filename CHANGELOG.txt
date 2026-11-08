@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.0
+- Two new liveries: Primeva Link Service (off-white and dusty pink airliner) and PALA Air Force Grey (air force grey with panel lines and roundels, PALA only).
+- Workshop livery tag `P220 Primrose`.
+- Liveries now reach every outer panel: bay doors, slats, flaps, spoilers, thrust reverser doors, the laser housing and the radar.
+- Rounded nose radome tip.
+- Tail and elevator tips line up with their surfaces.
+- The laser can no longer aim at angles where it would hit its own aircraft (1 degree margin), so the HUD never shows SHOOT for a shot it cannot take.
+- Rank 2, value 95.
+- Split damage model with stock-style torn panels, interior damage textures and tougher joints.
+- Cabin seats and consoles, crew at their stations, engine fan blur, fin fold hydraulics, gear lever that moves with the gear.
+
 ## 0.3.28-alpha
 - First livery, "P-LINK Demonstrator", with colour, normal, metallic, ambient occlusion and damage maps. The skin is double-sided like the stock aircraft.
 - Internal structure (frames, stringers, floor beams, spars, ribs) and engine cores that show through damage, in the stock structure and engine materials.

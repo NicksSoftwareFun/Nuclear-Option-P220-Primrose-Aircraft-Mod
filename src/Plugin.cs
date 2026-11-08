@@ -13,7 +13,7 @@ namespace P220Primrose
     // and the fin folds up vertical once the aircraft has rolled 25 m from its spawn point. Only aircraft that come out
     // of a hangar are folded; runway and air spawns, the hangar preview and the encyclopedia show it upright. No stock
     // aircraft folds its fin, so this needs the plugin.
-    [BepInPlugin("nick.nuclearoption.p220primrose", "P220 Primrose", "0.3.28")]
+    [BepInPlugin("nick.nuclearoption.p220primrose", "P220 Primrose", "1.0.0")]
     [BepInDependency("com.nikkorap.blueprinter", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
@@ -43,6 +43,7 @@ namespace P220Primrose
                 LaserLog.Patch(h);
                 Reversers.Patch(h);
                 Thorn.Patch(h);
+                Interior.Patch(h);
                 var go = new GameObject("P220Runtime"); DontDestroyOnLoad(go); go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<P220Panel>();
                 Logger.LogInfo("P220 Primrose loaded");
@@ -60,6 +61,7 @@ namespace P220Primrose
                 // out of a hangar
                 g.Prepare();
                 __instance.gameObject.AddComponent<GearLight>().ac = __instance;
+                __instance.gameObject.AddComponent<P220Fans>().Setup(__instance);
             }
             catch (Exception e) { Log.LogWarning("P220: scaling setup failed: " + e.Message); }
         }
@@ -169,6 +171,8 @@ namespace P220Primrose
                 var lo = root.InverseTransformPoint(fin.TransformPoint(mb.min));
                 hinge = new Vector3(Mathf.Abs(root.InverseTransformPoint(fin.TransformPoint(mb.max)).x), lo.y, root.InverseTransformPoint(fin.position).z);
             }
+            var fh = FindChild(transform, "finFoldHinge");      // 0.4.5: the hinge line placed by the builder, when present
+            if (fh != null) hinge = root.InverseTransformPoint(fh.position);
             Plugin.Log.LogInfo("P220 fin hinge (aircraft frame) " + hinge.ToString("F2"));
             axis = root.InverseTransformDirection(fin.parent.forward);
             finPos = root.InverseTransformPoint(fin.position); finRot = Quaternion.Inverse(root.rotation) * fin.rotation;
@@ -335,12 +339,34 @@ namespace P220Primrose
             var q = Quaternion.AngleAxis(-FoldAngle * f, axis);   // about the fore-aft axis, top towards starboard
             var root = ac != null ? ac.transform : transform;
             fin.SetPositionAndRotation(root.TransformPoint(hinge + q * (finPos - hinge)), root.rotation * (q * finRot));
+            SyncAttach();
             if (move)
             {
                 Physics.SyncTransforms();
                 if (rb != null) { rb.ResetInertiaTensor(); SetMass(); }
             }
         }
+
+        // The game records where each part sits on its parent when the part wakes up, and splits a part off as broken
+        // once it is more than 0.5 m from that spot (AeroPart.CheckAttachment); merging also snaps the part back to it.
+        // The fin wakes up folded, so the record is kept in step with every fold: otherwise the upright fin reads as torn
+        // off the moment the parts are split out with their own joints (the 0.4.x "breaks when it reaches vertical").
+        private static FieldInfo fAttach, fAPos, fARot, fAParent;
+        private void SyncAttach()
+        {
+            if (finPart == null) { var up = R.T("UnitPart"); if (up != null) finPart = fin.GetComponent(up); }
+            if (finPart == null) return;
+            const BindingFlags F = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            if (fAttach == null) fAttach = R.T("UnitPart").GetField("attachInfo", F);
+            var info = fAttach?.GetValue(finPart);
+            if (info == null) return;
+            if (fAPos == null) { var t = info.GetType(); fAPos = t.GetField("localPosition", F); fARot = t.GetField("localRotation", F); fAParent = t.GetField("parentPart", F); }
+            var parent = fAParent?.GetValue(info) as Component;
+            if (parent == null || fAPos == null || fARot == null) return;
+            fAPos.SetValue(info, parent.transform.InverseTransformPoint(fin.position));
+            fARot.SetValue(info, Quaternion.Inverse(parent.transform.rotation) * fin.rotation);
+        }
+        private Component finPart;
 
         private static Transform FindChild(Transform t, string name)
         {
@@ -418,6 +444,14 @@ namespace P220Primrose
                 if (!(lFire.GetValue(__instance) is bool f) || !f) return;
                 var unit = lUnit.GetValue(__instance) as Component;
                 if (unit == null || !unit.name.StartsWith("P220Primrose")) return;
+                // 0.4.2: the laser holds fire while the crew is jamming, so it never takes the capacitor charge
+                // the ECM needs for a soft kill
+                if (EcmActive(unit))
+                {
+                    lFire.SetValue(__instance, false);
+                    if (Time.time - lastEcmLog > 5f) { lastEcmLog = Time.time; Plugin.Log.LogInfo("P220 laser: held fire, ECM active"); }
+                    return;
+                }
                 var tr = __instance.transform; var dt = lDir.GetValue(__instance) as Transform; if (dt == null) return;
                 var tt = lTargetT?.GetValue(__instance) as Transform;
                 var target = tt != null ? tt.position : tr.position + tr.forward * 20000f;
@@ -430,6 +464,30 @@ namespace P220Primrose
                 if (Time.time - lastGuardLog > 2f) { lastGuardLog = Time.time; Plugin.Log.LogInfo("P220 laser: held fire, beam would cross " + part.name); }
             }
             catch (Exception e) { Plugin.Log.LogWarning("P220 laser guard: " + e.Message); }
+        }
+        static float lastEcmLog; static Type jamT; static FieldInfo jLast, jAircraft;
+        static readonly Dictionary<int, List<Behaviour>> jammersOf = new Dictionary<int, List<Behaviour>>();
+        static readonly Dictionary<int, float> jammerScan = new Dictionary<int, float>();
+        // a stock RadarJammer is enabled while it is being fired and switches itself off 0.1 s after the last Fire()
+        internal static bool EcmActive(Component unit)
+        {
+            if (jamT == null) { jamT = R.T("RadarJammer"); jLast = jamT?.GetField("lastActivated", F); jAircraft = R.T("Countermeasure")?.GetField("aircraft", F) ?? jamT?.GetField("aircraft", F); }
+            if (jamT == null || jLast == null) return false;
+            int id = unit.GetInstanceID();
+            if (!jammersOf.TryGetValue(id, out var list) || !jammerScan.TryGetValue(id, out var t) || Time.time - t > 2f)
+            {
+                list = new List<Behaviour>();
+                foreach (var o in UnityEngine.Object.FindObjectsOfType(jamT))
+                {
+                    var b = o as Behaviour; if (b == null) continue;
+                    var ac = jAircraft?.GetValue(b) as Component;
+                    if (ReferenceEquals(ac, unit) || (ac == null && b.transform.IsChildOf(unit.transform))) list.Add(b);
+                }
+                jammersOf[id] = list; jammerScan[id] = Time.time;
+            }
+            foreach (var b in list)
+                if (b != null && b.enabled && jLast.GetValue(b) is float last && Time.timeSinceLevelLoad - last < 0.25f) return true;
+            return false;
         }
         internal static Component HitsSelf(Component unit, Vector3 origin, Vector3 dir, float len)
         {
@@ -902,6 +960,57 @@ namespace P220Primrose
                 }
             }
             catch (Exception e) { Plugin.Log.LogWarning("P220 reverse thrust: " + e.Message); }
+        }
+    }
+
+    // Interior damage (0.4.7): the cargo bay and cabin liner materials use the stock AircraftSkin shader with their own
+    // maps, like the skin. The game only passes a part's health to the FIRST material of its damage renderers (that slot
+    // also takes the livery), and no stock aircraft has damage maps inside, so there is no stock route for this: the part's
+    // health is copied to its interior materials whenever the game updates it.
+    internal static class Interior
+    {
+        const BindingFlags F = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        static FieldInfo fDmg, fRenderers, fHp, fUnit;
+        static readonly Dictionary<int, List<Material>> mats = new Dictionary<int, List<Material>>();
+        public static void Patch(Harmony h)
+        {
+            var up = R.T("UnitPart");
+            fDmg = up?.GetField("damageMaterial", F); fHp = up?.GetField("hitPoints", F); fUnit = up?.GetField("parentUnit", F);
+            fRenderers = R.T("DamageMaterial")?.GetField("renderers", F);
+            var ad = up?.GetMethod("ApplyDamage", F); var rp = up?.GetMethod("Repair", F);
+            if (ad == null || fDmg == null || fHp == null || fRenderers == null || fUnit == null) { Plugin.Log.LogWarning("P220: UnitPart fields not found, interior damage off"); return; }
+            h.Patch(ad, postfix: new HarmonyMethod(typeof(Interior), nameof(Post)));
+            if (rp != null) h.Patch(rp, postfix: new HarmonyMethod(typeof(Interior), nameof(Post)));
+        }
+        static void Post(Component __instance)
+        {
+            try
+            {
+                if (__instance == null) return;
+                var unit = fUnit.GetValue(__instance) as Component;
+                if (unit == null || !unit.name.StartsWith("P220Primrose")) return;
+                int id = __instance.GetInstanceID();
+                if (!mats.TryGetValue(id, out var list))
+                {
+                    list = new List<Material>();
+                    var rs = new List<Renderer>();
+                    if (fRenderers.GetValue(fDmg.GetValue(__instance)) is System.Collections.IEnumerable e) foreach (var o in e) if (o is Renderer r && r != null) rs.Add(r);
+                    var own = __instance.GetComponent<Renderer>(); if (own != null && !rs.Contains(own)) rs.Add(own);
+                    foreach (var r in rs)
+                    {
+                        var sh = r.sharedMaterials; bool any = false;
+                        for (int i = 1; i < sh.Length; i++) if (sh[i] != null && (sh[i].name.StartsWith("P220_bay") || sh[i].name.StartsWith("P220_lining"))) any = true;
+                        if (!any) continue;
+                        var ms = r.materials;   // per-renderer copies, as the game makes for the skin
+                        for (int i = 1; i < ms.Length; i++) if (ms[i] != null && (ms[i].name.StartsWith("P220_bay") || ms[i].name.StartsWith("P220_lining"))) list.Add(ms[i]);
+                    }
+                    mats[id] = list;
+                }
+                if (list.Count == 0) return;
+                float hp = (float)fHp.GetValue(__instance);
+                foreach (var m in list) if (m != null) m.SetFloat("_HitPoints", hp);
+            }
+            catch (Exception ex) { Plugin.Log.LogWarning("P220 interior: " + ex.Message); }
         }
     }
 
