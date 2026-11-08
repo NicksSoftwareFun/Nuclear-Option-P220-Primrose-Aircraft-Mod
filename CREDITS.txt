@@ -17,7 +17,7 @@ The bundle also carries copies of a few stock parts, such as the crew figures. T
 | [Blueprinter](https://github.com/nikkorap/NOBlueprinter-Releases) | nikkorap | See its repository | Loads the embedded `.nobp` bundle (runtime dependency, not redistributed) |
 | [Blender](https://www.blender.org/) / bpy | Blender Foundation | GPL-2.0-or-later | Modelling and rendering tool (not redistributed) |
 | [Inter](https://rsms.me/inter/) | Rasmus Andersson | SIL Open Font License 1.1 | Lettering painted into the livery texture (font files not redistributed) |
-| [Allerta Stencil](https://fonts.google.com/specimen/Allerta+Stencil) | Matt McInerney | SIL Open Font License 1.1 | Stencil lettering on the PALA livery (font file in `art/scripts/livery/logos`) |
+| [Allerta Stencil](https://fonts.google.com/specimen/Allerta+Stencil) | Matt McInerney | SIL Open Font License 1.1 | Stencil lettering on the PALA livery (font file and its licence, OFL.txt, in `art/scripts/livery/logos`) |
 
 ## P220 Primrose
 
