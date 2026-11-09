@@ -1627,18 +1627,21 @@ public static class P220Builder
         // plus 7.5 t of mission systems and survivability equipment (40% of the real 18.7 t max payload), spread
         // through the cabin sections: centre +2,000, forward +2,000, rear +2,000, front cabin +1,500
         // 0.4.0 damage pieces: each section's mass is shared out with the pieces cut from it (the totals are unchanged)
-        Part("", 5600f, 0f, 0.55f, 5000f);
+        // 0.4.21 (centre of gravity): 1.1 t moved from the centre section and 1.1 t from the rear fuselage into the
+        // forward cabin (total unchanged). The CG moves about 0.8 m forward, to about 1.9 m ahead of the main wheels
+        // (nose wheel ~12% of the weight), so full thrust from a standstill no longer rocks it back onto its tail.
+        Part("", 4500f, 0f, 0.55f, 5000f);
         Part("fuselage_skL", 600f, 0f, 0f, -1f); Part("fuselage_skR", 600f, 0f, 0f, -1f);
         Part("belly_FL", 300f, 0f, 0f, -1f); Part("belly_FR", 300f, 0f, 0f, -1f); Part("belly_AL", 300f, 0f, 0f, -1f); Part("belly_AR", 300f, 0f, 0f, -1f);
         Part("fuselage_F", 3000f, 0f, 0.15f, 0f);
         Part("fuselage_F_skL", 1000f, 0f, 0f, -1f); Part("fuselage_F_skR", 1000f, 0f, 0f, -1f);
-        Part("cockpit_R", 3000f, 0f, 0.2f, -1f);
+        Part("cockpit_R", 5200f, 0f, 0.2f, -1f);
         Part("cockpit_R_skL", 1000f, 0f, 0f, -1f); Part("cockpit_R_skR", 1000f, 0f, 0f, -1f);
         Part("cockpit_F", 1100f, 0f, 0.15f, -1f);
         Part("cockpit_F_skL", 350f, 0f, 0f, -1f); Part("cockpit_F_skR", 350f, 0f, 0f, -1f);
         Part("nose", 180f, 0f, 0.1f, -1f);
         Part("nose_skL", 60f, 0f, 0f, -1f); Part("nose_skR", 60f, 0f, 0f, -1f);
-        Part("fuselage_R", 3300f, 0f, 0.2f, 0f);
+        Part("fuselage_R", 2200f, 0f, 0.2f, 0f);
         Part("fuselage_R_skL", 1100f, 0f, 0f, -1f); Part("fuselage_R_skR", 1100f, 0f, 0f, -1f);
         Part("tail", 825f, 0f, 0.15f, -1f);
         Part("tail_skL", 225f, 0f, 0f, -1f); Part("tail_skR", 225f, 0f, 0f, -1f); Part("tail_skB", 225f, 0f, 0f, -1f);
@@ -2102,13 +2105,20 @@ public static class P220Builder
         so.FindProperty("aircraftGLimit").floatValue = 2.5f;
         so.FindProperty("PIDReferenceAirspeed").floatValue = 200f;
         so.FindProperty("maxSpeed").floatValue = 240f;
-        so.FindProperty("takeoffSpeed").floatValue = 78f;
-        so.FindProperty("takeoffDistance").floatValue = 1500f;
+        // 0.4.21: the AI pitches up once it passes 0.7 x takeoffSpeed. 99.2 m/s holds the nose down until 250 km/h
+        // (69.4 m/s), where the wing lifts off without dragging the tail (the tail touches at about 7.5 deg).
+        so.FindProperty("takeoffSpeed").floatValue = 99.2f;
+        // the longer roll to that speed needs a longer runway (about 1.4 km at full weight)
+        so.FindProperty("takeoffDistance").floatValue = 1800f;
         so.FindProperty("verticalLanding").boolValue = false;
         so.FindProperty("turningRadius").floatValue = 3000f;
         so.FindProperty("cornerSpeed").floatValue = 175f;
-        so.FindProperty("approachSpeed").floatValue = 88f;
-        so.FindProperty("landingSpeed").floatValue = 82f;
+        // 0.4.22: the AI flies the glideslope at landingSpeed x sqrt(mass / max weight), plus 1.5 m/s per 100 m beyond
+        // 500 m out. At 82 it slowed to ~330 km/h near the threshold and stalled short of the runway; 125 keeps it at
+        // ~400 km/h at a typical landing weight (the reversers stop it on the runway).
+        // 0.4.24: with the landing fix in the plugin that was a little fast; 113 is ~40 km/h slower (~360 km/h).
+        so.FindProperty("approachSpeed").floatValue = 113f;
+        so.FindProperty("landingSpeed").floatValue = 113f;
         so.FindProperty("shortLandingSpeed").floatValue = 77f;
         so.FindProperty("groundTurningRadius").floatValue = 25f;
         so.FindProperty("DefaultFuelLevel").floatValue = 0.5f;

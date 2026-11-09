@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2
+- AI landings: the AI no longer stalls short of the runway or bounces and goes around after touchdown. It flies the approach faster (the reversers stop it on the runway), stays down once the wheels touch, and holds the nose down on the landing roll.
+- Thrust reversers only open with weight on the main wheels, so the AI no longer opens them on final approach.
+- AI takeoffs: the AI keeps the nose down until about 250 km/h, which stops tail strikes.
+- Centre of gravity moved forward about 0.8 m, so the aircraft no longer tips back on full thrust from a standstill.
+- A P220 that finishes its landing run takes itself off the runway's landing list, so aircraft behind it on final no longer see traffic ahead and go around.
+
 ## 1.0.1
 - New bonus livery: Primevan Royal Family. Gloss black with a red swoosh edged in gold, gold engine rings, gold window borders, PRIMEVAN CROWN TRANSPORT above the windows and a white and gold PALA emblem on the tail and nose (PALA only).
 - Wheel hubs take their colour from the livery (gold on Primevan Royal Family, grey on the others).

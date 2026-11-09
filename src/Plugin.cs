@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using BepInEx;
 using HarmonyLib;
@@ -13,7 +14,7 @@ namespace P220Primrose
     // and the fin folds up vertical once the aircraft has rolled 25 m from its spawn point. Only aircraft that come out
     // of a hangar are folded; runway and air spawns, the hangar preview and the encyclopedia show it upright. No stock
     // aircraft folds its fin, so this needs the plugin.
-    [BepInPlugin("nick.nuclearoption.p220primrose", "P220 Primrose", "1.0.1")]
+    [BepInPlugin("nick.nuclearoption.p220primrose", "P220 Primrose", "1.0.2")]
     [BepInDependency("com.nikkorap.blueprinter", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
@@ -42,6 +43,7 @@ namespace P220Primrose
                 if (localSim != null) h.Patch(localSim, prefix: new HarmonyMethod(typeof(Plugin), nameof(PreLocalSim)), postfix: new HarmonyMethod(typeof(Plugin), nameof(PostLocalSim)));
                 LaserLog.Patch(h);
                 Reversers.Patch(h);
+                LandingFix.Patch(h);
                 Thorn.Patch(h);
                 Interior.Patch(h);
                 var go = new GameObject("P220Runtime"); DontDestroyOnLoad(go); go.hideFlags = HideFlags.HideAndDontSave;
@@ -864,7 +866,7 @@ namespace P220Primrose
 
     // Thrust reversers: each engine carries a stock Airbrake that swings its four reverser doors open at idle throttle.
     // Real reversers only deploy on the ground, so on this aircraft the doors stay shut (and close again) unless the
-    // landing gear is down and locked.
+    // landing gear is down and locked and a main wheel carries weight.
     internal static class Reversers
     {
         // Thrust reversers are the stock Airbrake (doors open at idle throttle). This keeps them shut unless the gear is
@@ -897,7 +899,30 @@ namespace P220Primrose
         static bool Allowed(Component ac)
         {
             if (fGear.GetValue(ac).ToString() != "LockedExtended") return false;
-            return !(R.Get(ac, "speed") is float v) || v > MinSpeed;
+            if (R.Get(ac, "speed") is float v && v <= MinSpeed) return false;
+            return OnWheels(ac);
+        }
+        // 0.4.20: the doors only open with weight on a main wheel, the same test the stock fly-by-wire uses on the nose
+        // wheel (LandingGear.WeightOnWheel(0.05)). Gear down and locked alone let them open on final approach at idle,
+        // and the AI flew into the ground. Parts detach from the aircraft at spawn, so the gear is found through
+        // R.Roots and cached per aircraft.
+        static readonly Dictionary<int, Component[]> gears = new Dictionary<int, Component[]>();
+        static MethodInfo mWow;
+        static bool OnWheels(Component ac)
+        {
+            var lgT = R.T("LandingGear"); if (lgT == null) return true;
+            if (mWow == null) mWow = lgT.GetMethod("WeightOnWheel", F); if (mWow == null) return true;
+            int id = ac.GetInstanceID();
+            if (!gears.TryGetValue(id, out var gs) || gs.Any(g => g == null))
+            {
+                var l = new List<Component>();
+                foreach (var r in R.Roots(ac)) if (r != null) l.AddRange(r.GetComponentsInChildren(lgT, true));
+                gs = l.Where(g => !g.name.Contains("_F")).ToArray(); if (gs.Length == 0) gs = l.ToArray();
+                gears[id] = gs;
+            }
+            var arg = new object[] { 0.05f };
+            foreach (var g in gs) if (g != null && g.gameObject.activeInHierarchy && (bool)mWow.Invoke(g, arg)) return true;
+            return false;
         }
         static void Pre(Component __instance, out float __state) { __state = (float)fOpen.GetValue(__instance); }
         static void Post(Component __instance, float __state)
@@ -960,6 +985,88 @@ namespace P220Primrose
                 }
             }
             catch (Exception e) { Plugin.Log.LogWarning("P220 reverse thrust: " + e.Message); }
+        }
+    }
+
+    // AI landings (0.4.23, ported from the PB-22's landing fix). Three things in the stock AI landing state stop a fast,
+    // reverser-equipped airliner from staying on the runway, and no aircraft setting changes them:
+    // - after touchdown it aborts as soon as its height reads over 1 m, so the small bounce of a 400 km/h touchdown
+    //   ends the landing. On the runway only a real climb (over 2.5 m) aborts now;
+    // - after touchdown it keeps aiming at the glideslope, holding the nose up until it flies off again. The nose is
+    //   lowered onto the runway like a pilot would (in this game a positive pitch input is stick forward, nose down);
+    // - it hands a landed aircraft to the taxi logic without taking it off the runway's landing list, so everything
+    //   behind it on final sees traffic ahead and aborts. A P220 takes itself off the list when its landing run ends.
+    // The main wheels sit under the point the game measures height from, so no wheel-height correction is needed.
+    // One log line per landing phase change shows where and why a landing was given up.
+    internal static class LandingFix
+    {
+        const float TouchedDown = 4f;   // AIPilotLandingState.LandingMode.Touched_Down
+        const BindingFlags F = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        static FieldInfo radarAlt;
+        public static void Patch(Harmony h)
+        {
+            try
+            {
+                var t = R.T("AIPilotLandingState"); var m = t?.GetMethod("RunMode", F);
+                radarAlt = R.T("Unit")?.GetField("radarAlt", F);
+                if (m == null || radarAlt == null) { Plugin.Log.LogWarning("P220: AI landing state not found, landing fix off"); return; }
+                h.Patch(m, prefix: new HarmonyMethod(typeof(LandingFix), nameof(Pre)), postfix: new HarmonyMethod(typeof(LandingFix), nameof(Post)));
+                var sw = t.GetMethod("SwitchMode", F); if (sw != null) h.Patch(sw, prefix: new HarmonyMethod(typeof(LandingFix), nameof(Switch)));
+                var leave = t.GetMethod("LeaveState", F); if (leave != null) h.Patch(leave, prefix: new HarmonyMethod(typeof(LandingFix), nameof(Leave)));
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("P220 landing fix not applied: " + e.Message); }
+        }
+        static Component Ours(object st) { var ac = R.Get(st, "aircraft") as Component; return ac != null && ac.name.StartsWith("P220Primrose") ? ac : null; }
+        static bool OnRunway(object st) { return R.Fl(st, "landingMode") == TouchedDown; }
+        static void Pre(object __instance, out float __state)
+        {
+            __state = float.NaN;
+            try
+            {
+                var ac = Ours(__instance); if (ac == null || !OnRunway(__instance)) return;
+                float alt = (float)radarAlt.GetValue(ac); __state = alt;
+                radarAlt.SetValue(ac, Mathf.Max(alt - 1.5f, 0f));
+            }
+            catch { }
+        }
+        static void Post(object __instance, float __state)
+        {
+            try
+            {
+                var ac = Ours(__instance); if (ac == null) return;
+                if (!float.IsNaN(__state)) radarAlt.SetValue(ac, __state);
+                if (!OnRunway(__instance)) return;
+                var ci = R.Get(__instance, "controlInputs"); var f = ci?.GetType().GetField("pitch"); if (f == null) return;
+                float pitchDeg = Mathf.Asin(Mathf.Clamp(ac.transform.forward.y, -1f, 1f)) * Mathf.Rad2Deg;
+                float push = Mathf.Clamp(pitchDeg * 0.15f, 0f, 0.6f);
+                if ((float)f.GetValue(ci) < push) f.SetValue(ci, push);
+            }
+            catch { }
+        }
+        static void Switch(object __instance, object[] __args)
+        {
+            try
+            {
+                var ac = Ours(__instance); if (ac == null) return;
+                var from = R.Get(__instance, "landingMode"); var to = __args[0];
+                if (from == null || to == null || from.Equals(to)) return;
+                var rb = R.Get(ac, "rb") as Rigidbody;
+                Plugin.Log.LogInfo("P220 AI landing #" + ac.GetInstanceID() + ": " + from + " -> " + to + ", height " + ((float)radarAlt.GetValue(ac)).ToString("F2")
+                    + " m, pitch " + (Mathf.Asin(Mathf.Clamp(ac.transform.forward.y, -1f, 1f)) * Mathf.Rad2Deg).ToString("F1") + ", speed " + (R.Fl(ac, "speed") * 3.6f).ToString("F0")
+                    + " km/h, sink " + (rb == null ? "?" : (-rb.velocity.y).ToString("F1")) + " m/s, mass " + (rb == null ? "?" : (rb.mass / 1000f).ToString("F1")) + " t");
+            }
+            catch { }
+        }
+        static void Leave(object __instance)
+        {
+            try
+            {
+                var ac = Ours(__instance); if (ac == null || !OnRunway(__instance)) return;
+                var runway = R.Get(R.Get(__instance, "runwayUsage"), "Runway");
+                var mi = runway?.GetType().GetMethod("DeregisterLanding", F);
+                if (mi != null) mi.Invoke(runway, new object[] { ac });
+            }
+            catch { }
         }
     }
 
