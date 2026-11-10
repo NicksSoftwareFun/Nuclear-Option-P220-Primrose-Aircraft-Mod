@@ -1,9 +1,15 @@
 """Export the complete P220 exterior for livery painting (the repo's Livery Bundle).
 Usage: python3 export_livery_bundle.py -- <p220 uv blend> <texture dir> <out_dir>
-Writes <out_dir>/P220 Exterior.fbx: every exterior part at its place (gear down with the nose gear doors open, doors
-and bays shut, fin upright, reversers stowed, flaps and slats in), named by part, with the in-game UVs. Rules:
-- every P220_skin face is kept, so the skin has no holes (only the reversed back face of a face pair is dropped, so
-  Blender does not show two faces fighting in the same place);
+Writes <out_dir>/P220 Exterior.fbx: the exterior with gear down and the nose gear doors open, doors and bays shut, fin
+upright, reversers stowed, flaps and slats in, with the in-game UVs, as two objects:
+- "P220 Skin": every face that takes the livery, joined into ONE object. Blender paints only the active object, so with
+  the skin split by part a fill or brush stroke never reached the flaps, spoilers, slats and other separate panels, and
+  those stayed white in game;
+- "P220 Details": windows, glass, metal, tyres and fans, which a livery does not paint.
+Rules:
+- every P220_skin face is kept, so the skin has no holes (only the reversed back face of a face pair with the SAME UVs
+  is dropped, so Blender does not show two faces fighting in the same place; a back face with its own UVs is kept);
+- the wheel hubs take the livery from the hub patch of the atlas, as in game (export_p220.py, 0.4.18);
 - faces of the other materials (windows, glass, metal, fans) are kept only where they can be seen from outside
   (from either side, since the game draws glass from both sides);
 - the fan blur discs are left out;
@@ -31,6 +37,21 @@ for s in ('L', 'R'):
         if best is None or cz < best[0]: best = (cz, R)
     dr.matrix_world = best[1] @ dr.matrix_world
 bpy.context.view_layer.update()
+# wheel hubs: the same livery faces and UVs as the game export (export_p220.py works in the pivot frame turned 180 deg
+# about Z, so its y is -y here)
+HUB_UV = ((1021 + 0.5) / 2048, 1 - (616 + 0.5) / 2048); HUB_S = (16 / 2048) / 0.6
+for o in bpy.data.collections['MODEL'].objects:
+    if o.type != 'MESH' or not o.name.startswith('wheel_'): continue
+    me = o.data; names = [m.name if m else '' for m in me.materials]
+    if 'P220_metal' not in names: continue
+    k = names.index('P220_metal'); me.materials[k] = bpy.data.materials[SKIN]
+    if not me.uv_layers: me.uv_layers.new(name='UVMap')
+    uv = me.uv_layers.active.data
+    for p in me.polygons:
+        if p.material_index != k: continue
+        for li in p.loop_indices:
+            c = me.vertices[me.loops[li].vertex_index].co
+            uv[li].uv = (HUB_UV[0] - c.y * HUB_S, HUB_UV[1] + c.z * HUB_S)
 objs = [o for o in bpy.data.collections['MODEL'].objects
         if o.type == 'MESH' and len(o.data.polygons) and not o.hide_render and not o.name.startswith(LEAVE_OUT)]
 vs, ps = [], []
@@ -50,6 +71,9 @@ def outside(p, n):
     return False
 # skin face pairs (a face and its reversed copy at the same spot): keep the one that faces outside
 def fkey(f): return tuple(sorted((round(v.co.x, 3), round(v.co.y, 3), round(v.co.z, 3)) for v in f.verts))
+def ukey(on, f):
+    ul = bms[on].loops.layers.uv.active
+    return tuple(sorted((round(l[ul].uv.x, 4), round(l[ul].uv.y, 4)) for l in f.loops)) if ul else ()
 bms = {}
 for o in objs:
     b = bmesh.new(); b.from_mesh(o.data); b.transform(o.matrix_world); b.normal_update(); b.faces.ensure_lookup_table(); bms[o.name] = b
@@ -65,8 +89,9 @@ for k, lst in pairs.items():
     fs = [(on, bms[on].faces[fi]) for on, fi in lst]
     vis = [outside(f.calc_center_median(), f.normal) for on, f in fs]
     keep = vis.index(True) if any(vis) else 0
+    uk = ukey(*fs[keep])
     for j, (on, f) in enumerate(fs):
-        if j != keep: kill_skin.add((on, f.index))
+        if j != keep and ukey(on, f) == uk: kill_skin.add((on, f.index))
 col = bpy.data.collections.new('LIVERY'); bpy.context.scene.collection.children.link(col)
 kept = drop = 0; parts = []
 for o in objs:
@@ -122,6 +147,27 @@ bpy.ops.object.select_all(action='DESELECT')
 for n in parts: n.select_set(True)
 bpy.context.view_layer.objects.active = parts[0]
 bpy.ops.object.shade_smooth_by_angle(angle=math.radians(35))
+# join: one object for the livery skin (so one fill or stroke reaches every panel) and one for everything else
+bpy.ops.object.join(); whole = bpy.context.view_layer.objects.active
+def split(name, want_skin):
+    me = whole.data.copy(); me.name = name
+    b = bmesh.new(); b.from_mesh(me)
+    si = {i for i, m in enumerate(me.materials) if m and m.name == SKIN}
+    bmesh.ops.delete(b, geom=[f for f in b.faces if (f.material_index in si) != want_skin], context='FACES')
+    bmesh.ops.delete(b, geom=[v for v in b.verts if not v.link_faces], context='VERTS')
+    b.to_mesh(me); b.free()
+    used = sorted({p.material_index for p in me.polygons}); mats = [me.materials[i] for i in used]
+    idx = [used.index(p.material_index) for p in me.polygons]
+    me.materials.clear()
+    for m in mats: me.materials.append(m)
+    for p, k in zip(me.polygons, idx): p.material_index = k
+    n = bpy.data.objects.new(name, me); col.objects.link(n); return n
+parts = [split('P220 Skin', True), split('P220 Details', False)]
+bpy.data.objects.remove(whole)
+bpy.ops.object.select_all(action='DESELECT')
+for n in parts: n.select_set(True)
+bpy.context.view_layer.objects.active = parts[0]
+print('skin faces in the joined skin object', len(parts[0].data.polygons))
 bpy.ops.export_scene.fbx(filepath=os.path.join(outdir, 'P220 Exterior.fbx'), use_selection=True, apply_unit_scale=True,
     apply_scale_options='FBX_SCALE_UNITS', axis_forward='-Z', axis_up='Y', object_types={'MESH'}, mesh_smooth_type='FACE',
     use_mesh_modifiers=False, add_leaf_bones=False, use_tspace=True, path_mode='STRIP')
@@ -146,4 +192,4 @@ mr.save(os.path.join(outdir, 'P220 Metallic.png'))
 Image.fromarray(255 - np.asarray(ma)).save(os.path.join(outdir, 'P220 Roughness.png'))
 Image.open(os.path.join(tex, 'P220_skin_ao.png')).convert('L').save(os.path.join(outdir, 'P220 AO.png'))
 print('tris', sum(sum(len(p.vertices) - 2 for p in n.data.polygons) for n in parts))
-print('parts:', ' '.join(sorted(n.name for n in parts)))
+print('objects:', ' '.join(n.name for n in parts))
